@@ -1,12 +1,25 @@
 import os
 import json
 import time
+import datetime
 import asyncio
 from typing import Dict, List, Optional, AsyncGenerator
 import tiktoken
 import anthropic
-from anthropic import Anthropic
 from pydantic import BaseModel
+import decimal
+
+# Custom JSON encoder to handle datetime and other non-serializable objects
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime.datetime, datetime.date)):
+            return obj.isoformat()
+        elif isinstance(obj, decimal.Decimal):
+            return float(obj)
+        elif hasattr(obj, '__dict__'):
+            return obj.__dict__
+        else:
+            return super().default(obj)
 
 from app.core.config import settings
 
@@ -22,8 +35,8 @@ class AnthropicService:
     """Service for interacting with the Anthropic API"""
     
     def __init__(self):
-        self.client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self.default_model = "claude-3-5-haiku"
+        self.client = anthropic.Client(api_key=settings.ANTHROPIC_API_KEY)
+        self.default_model = "claude-3-haiku-20240307"
         # Initialize token counter
         self.tokenizer = tiktoken.get_encoding("cl100k_base")  # Claude uses cl100k tokenizer
     
@@ -47,6 +60,27 @@ class AnthropicService:
         
         return TokenCount(input_tokens=input_tokens, output_tokens=0)
     
+    def _format_prompt(self, messages: List[Dict[str, str]]) -> str:
+        """Format messages into Claude prompt format for v0.5.0"""
+        prompt = ""
+        
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            
+            if role == "user":
+                prompt += f"\n\nHuman: {content}"
+            elif role == "assistant":
+                prompt += f"\n\nAssistant: {content}"
+            elif role == "system":
+                # System messages are handled differently in Claude API
+                # We'll prepend it to the first user message
+                continue
+        
+        # Add final assistant prompt
+        prompt += "\n\nAssistant:"
+        return prompt
+    
     async def create_chat_completion(
         self, 
         messages: List[Dict[str, str]], 
@@ -68,33 +102,28 @@ class AnthropicService:
         """
         model = model or self.default_model
         
-        # Format messages for Anthropic
-        anthropic_messages = []
-        for msg in messages:
-            anthropic_messages.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
+        # Format messages into Claude prompt format
+        prompt = self._format_prompt(messages)
         
         # Count input tokens
-        input_token_count = self.count_tokens(json.dumps(anthropic_messages))
+        input_token_count = self.count_tokens(prompt)
         
         try:
-            # Call Anthropic API
-            response = await asyncio.to_thread(
-                self.client.messages.create,
+            # Call Anthropic API - using the correct method for v0.5.0
+            response = self.client.completions.create(
+                prompt=prompt,
                 model=model,
-                messages=anthropic_messages,
-                max_tokens=max_tokens,
-                temperature=temperature
+                max_tokens_to_sample=max_tokens,
+                temperature=temperature,
+                stop_sequences=["\n\nHuman:"]
             )
             
             # Count output tokens
-            output_token_count = self.count_tokens(response.content[0].text)
+            output_token_count = self.count_tokens(response.completion)
             
             # Construct result
             result = {
-                "content": response.content[0].text,
+                "content": response.completion.strip(),
                 "role": "assistant",
                 "token_usage": {
                     "input_tokens": input_token_count,
@@ -106,9 +135,10 @@ class AnthropicService:
             
             return result
         
-        except anthropic.APIError as e:
+        except Exception as e:
             # Handle API errors
             error_message = f"Anthropic API Error: {str(e)}"
+            print(f"Error calling Anthropic API: {str(e)}")
             return {
                 "content": error_message,
                 "role": "assistant",
@@ -142,53 +172,46 @@ class AnthropicService:
         """
         model = model or self.default_model
         
-        # Format messages for Anthropic
-        anthropic_messages = []
-        for msg in messages:
-            anthropic_messages.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
+        # Format messages into Claude prompt format
+        prompt = self._format_prompt(messages)
         
         # Count input tokens
-        input_token_count = self.count_tokens(json.dumps(anthropic_messages))
+        input_token_count = self.count_tokens(prompt)
         output_token_count = 0
         full_response = ""
         
         try:
-            # Call Anthropic API with streaming
-            stream = await asyncio.to_thread(
-                self.client.messages.create,
+            # Call Anthropic API with streaming - using the correct method for v0.5.0
+            with self.client.completions.stream(
+                prompt=prompt,
                 model=model,
-                messages=anthropic_messages,
-                max_tokens=max_tokens,
+                max_tokens_to_sample=max_tokens,
                 temperature=temperature,
-                stream=True
-            )
-            
-            # Stream the response
-            async for chunk in stream:
-                if chunk.type == "content_block_delta" and chunk.delta.text:
-                    chunk_text = chunk.delta.text
-                    full_response += chunk_text
-                    chunk_tokens = self.count_tokens(chunk_text)
-                    output_token_count += chunk_tokens
-                    
-                    yield {
-                        "content": chunk_text,
-                        "role": "assistant",
-                        "token_usage": {
-                            "input_tokens": input_token_count,
-                            "output_tokens": output_token_count,
-                            "total_tokens": input_token_count + output_token_count
-                        },
-                        "finish_reason": None,
-                        "model": model
-                    }
+                stop_sequences=["\n\nHuman:"]
+            ) as stream:
+                for completion in stream:
+                    if completion.completion:
+                        chunk_text = completion.completion[len(full_response):]
+                        if chunk_text:
+                            full_response = completion.completion
+                            chunk_tokens = self.count_tokens(chunk_text)
+                            output_token_count += chunk_tokens
+                            
+                            yield {
+                                "content": chunk_text,
+                                "role": "assistant",
+                                "token_usage": {
+                                    "input_tokens": input_token_count,
+                                    "output_tokens": output_token_count,
+                                    "total_tokens": input_token_count + output_token_count
+                                },
+                                "finish_reason": None,
+                                "model": model
+                            }
             
             # Final yield with complete information
             yield {
-                "content": full_response,
+                "content": full_response.strip(),
                 "role": "assistant",
                 "token_usage": {
                     "input_tokens": input_token_count,
@@ -199,9 +222,10 @@ class AnthropicService:
                 "model": model
             }
             
-        except anthropic.APIError as e:
+        except Exception as e:
             # Handle API errors
             error_message = f"Anthropic API Error: {str(e)}"
+            print(f"Error in stream_chat_completion: {str(e)}")
             yield {
                 "content": error_message,
                 "role": "assistant",

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.database import engine, get_db
 from app.models import dimensions, transactions  # Import models to create tables
 from app.db.init_db import init_db
-from app.api import users, threads, messages, billing
+from app.api import users, threads, messages, billing, websockets
 from app.services.message_processor import initialize_message_processors, shutdown_message_processors
 import logging
 
@@ -47,6 +47,7 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(threads.router, prefix="/api/threads", tags=["threads"])
 app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
+app.include_router(websockets.router, prefix="/ws", tags=["websockets"])
 
 # Configure logging
 logging.basicConfig(

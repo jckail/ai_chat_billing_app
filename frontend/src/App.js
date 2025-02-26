@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, CssBaseline, Drawer, AppBar, Toolbar, Typography, Divider, 
          List, ListItem, ListItemButton, ListItemIcon, ListItemText, 
          Paper, TextField, Button, CircularProgress, Tabs, Tab, IconButton } from '@mui/material';
@@ -7,7 +7,7 @@ import { Add as AddIcon, Send as SendIcon, Refresh as RefreshIcon,
 import axios from 'axios';
 
 // API base URL
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
 
 // Default user (for POC, no auth required)
 const DEFAULT_USER = {
@@ -19,7 +19,7 @@ const DEFAULT_USER = {
 // Default model
 const DEFAULT_MODEL = {
   model_id: 1,
-  model_name: 'claude-3-5-haiku'
+  model_name: 'claude-3-haiku-20240307'
 };
 
 function App() {
@@ -30,11 +30,147 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [wsStatus, setWsStatus] = useState('disconnected');
+  const [typing, setTyping] = useState(false);
+  
+  // WebSocket reference
+  const wsRef = useRef(null);
   const [loadingThreads, setLoadingThreads] = useState(false);
   const [tabValue, setTabValue] = useState(0);
   const [threadMetrics, setThreadMetrics] = useState(null);
   
   const drawerWidth = 280;
+
+  // Function to establish WebSocket connection
+  const connectWebSocket = useCallback((userId, threadId) => {
+    if (!userId || !threadId) return null;
+    
+    // Close any existing connection
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.close();
+    }
+    
+    // Create new WebSocket connection
+    const wsUrl = `ws://localhost:8000/ws/chat/${userId}/${threadId}`;
+    console.log(`Connecting to WebSocket: ${wsUrl}`);
+    
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+    
+    // WebSocket event handlers
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      setWsStatus('connected');
+      
+      // Start ping interval to keep connection alive
+      const pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'PING',
+            timestamp: new Date().toISOString()
+          }));
+        } else {
+          clearInterval(pingInterval);
+        }
+      }, 30000); // Send ping every 30 seconds
+      
+      // Store interval ID for cleanup
+      ws.pingInterval = pingInterval;
+    };
+    
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      console.log('WebSocket message received:', data);
+      
+      switch (data.type) {
+        case 'THREAD_CONNECTED':
+          // Handle initial thread connection with history
+          if (data.history && Array.isArray(data.history)) {
+            setMessages(data.history);
+          }
+          break;
+          
+        case 'MESSAGE_SENT':
+          // Confirmation of user message received by server
+          break;
+          
+        case 'ASSISTANT_TYPING':
+          // AI is generating a response
+          setTyping(true);
+          break;
+          
+        case 'ASSISTANT_CHUNK':
+          // Incremental AI response chunk
+          setMessages(prevMessages => {
+            // Find if we already have a partial message
+            const existingIndex = prevMessages.findIndex(m => 
+              m.id === data.message_id || m.messageId === data.message_id);
+            
+            if (existingIndex >= 0) {
+              // Update existing message
+              const updatedMessages = [...prevMessages];
+              updatedMessages[existingIndex] = {
+                ...updatedMessages[existingIndex],
+                content: updatedMessages[existingIndex].content + data.chunk
+              };
+              return updatedMessages;
+            } else {
+              // Add new partial message
+              return [...prevMessages, {
+                id: data.message_id,
+                messageId: data.message_id,
+                role: 'assistant',
+                content: data.chunk,
+                isPartial: true
+              }];
+            }
+          });
+          break;
+          
+        case 'ASSISTANT_COMPLETE':
+          // Final complete AI response
+          setTyping(false);
+          setMessages(prevMessages => {
+            // Replace partial message with complete one if it exists
+            const updatedMessages = prevMessages.filter(m => m.id !== data.message.id);
+            return [...updatedMessages, data.message];
+          });
+          
+          // Update metrics
+          if (currentThread) {
+            fetchThreadMetrics(currentThread.thread_id);
+          }
+          break;
+          
+        case 'PONG':
+          // Received pong (connection is alive)
+          break;
+          
+        case 'ERROR':
+          console.error('WebSocket error:', data.error);
+          break;
+          
+        default:
+          console.log('Unknown message type:', data.type);
+      }
+    };
+    
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setWsStatus('disconnected');
+      
+      if (ws.pingInterval) {
+        clearInterval(ws.pingInterval);
+      }
+    };
+    
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setWsStatus('error');
+    };
+    
+    return ws;
+  }, []);
 
   // Initialize the app
   useEffect(() => {
@@ -43,28 +179,60 @@ function App() {
     
     // Load threads for the default user
     fetchThreads(DEFAULT_USER.user_id);
+    
+    // Cleanup WebSocket on unmount
+    return () => {
+      if (wsRef.current) {
+        if (wsRef.current.pingInterval) {
+          clearInterval(wsRef.current.pingInterval);
+        }
+        wsRef.current.close();
+      }
+    };
   }, []);
 
-  // Fetch threads when user changes
+  // Fetch user threads on component mount
   useEffect(() => {
     if (user) {
       fetchThreads(user.user_id);
     }
   }, [user]);
 
-  // Fetch messages when current thread changes
+  // Connect to WebSocket when current thread changes
   useEffect(() => {
-    if (currentThread) {
+    if (currentThread && user) {
       fetchMessages(currentThread.thread_id);
       fetchThreadMetrics(currentThread.thread_id);
+      
+      // Connect to WebSocket for this thread
+      connectWebSocket(user.user_id, currentThread.thread_id);
     }
-  }, [currentThread]);
+    
+    // Cleanup function that runs when the component unmounts or when dependencies change
+    return () => {
+      // Safely close any WebSocket connection
+      if (wsRef.current) {
+        if (wsRef.current.pingInterval) {
+          clearInterval(wsRef.current.pingInterval);
+        }
+        wsRef.current.close();
+      }
+    };
+  }, [currentThread, connectWebSocket, user]);
+
+  // Scroll messages into view when they change
+  useEffect(() => {
+    const messagesContainer = document.querySelector('.message-container');
+    if (messagesContainer) {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+  }, [messages]);
 
   // Fetch user's threads
   const fetchThreads = async (userId) => {
     setLoadingThreads(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/threads?user_id=${userId}`);
+      const response = await axios.get(`${API_BASE_URL}/threads?user_id=${userId}`);
       setThreads(response.data);
       
       // If there are threads and no current thread, set the first thread as current
@@ -78,10 +246,45 @@ function App() {
     }
   };
 
+  // Send a message via WebSocket
+  const sendMessageWs = async () => {
+    if (!newMessage.trim() || !currentThread) return;
+    
+    const messageContent = newMessage.trim();
+    setNewMessage('');
+    
+    // Add user message to the UI immediately
+    const tempUserMessage = {
+      id: `temp-${Date.now()}`,
+      role: 'user',
+      content: messageContent,
+      timestamp: new Date().toISOString()
+    };
+    setMessages(prevMessages => [...prevMessages, tempUserMessage]);
+    
+    // Send message through WebSocket if connected
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'CHAT',
+        message: messageContent,
+        model_id: DEFAULT_MODEL.model_id
+      }));
+    }
+  };
+
   // Fetch messages for a thread
   const fetchMessages = async (threadId) => {
+    // Only fetch if we're not using WebSockets yet
+    if (wsStatus === 'connected') {
+      console.log('Using WebSocket connection for messages');
+      return;
+    }
+    
+    // Otherwise fall back to REST API
+    console.log('Falling back to REST API for messages');
+    
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/messages/${threadId}/history`);
+      const response = await axios.get(`${API_BASE_URL}/messages/${threadId}/history`);
       setMessages(response.data);
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -91,7 +294,7 @@ function App() {
   // Fetch thread metrics
   const fetchThreadMetrics = async (threadId) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/api/billing/metrics/thread/${threadId}`);
+      const response = await axios.get(`${API_BASE_URL}/billing/metrics/thread/${threadId}`);
       setThreadMetrics(response.data);
     } catch (error) {
       console.error('Error fetching thread metrics:', error);
@@ -101,7 +304,7 @@ function App() {
   // Create a new thread
   const createThread = async () => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/threads`, {
+      const response = await axios.post(`${API_BASE_URL}/threads`, {
         user_id: user.user_id,
         title: `New Thread ${new Date().toLocaleString()}`,
         model_id: DEFAULT_MODEL.model_id
@@ -118,10 +321,18 @@ function App() {
   // Send a message
   const sendMessage = async () => {
     if (!newMessage.trim() || !currentThread) return;
+
+    // Try to use WebSocket if available
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      sendMessageWs();
+      return;
+    }
     
+    // Fall back to REST API if WebSocket is not available
+    console.log('Using REST API for sending message');
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/messages`, {
+      const response = await axios.post(`${API_BASE_URL}/messages`, {
         thread_id: currentThread.thread_id,
         user_id: user.user_id,
         content: newMessage,
@@ -145,6 +356,14 @@ function App() {
     setTabValue(newValue);
   };
 
+  // Handle sending message with Enter key
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !loading) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
   // Format currency
   const formatCurrency = (amount) => {
     return `$${parseFloat(amount).toFixed(6)}`;
@@ -159,7 +378,8 @@ function App() {
         position="fixed"
         sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}
       >
-        <Toolbar>
+        <Toolbar sx={{ display: 'flex', alignItems: 'center' }}>
+          <Box sx={{ mr: 2, fontSize: '1.2rem' }}>{wsStatus === 'connected' ? '🟢' : '🔴'}</Box>
           <Typography variant="h6" noWrap component="div">
             AI Thread Billing
           </Typography>
@@ -301,7 +521,7 @@ function App() {
                     <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                       {messages.map((message) => (
                         <Box
-                          key={message.message_id}
+                          key={message.id || message.message_id}
                           className={`message ${message.role === 'user' ? 'user-message' : 'assistant-message'}`}
                         >
                           <Typography variant="body1">
@@ -309,7 +529,9 @@ function App() {
                           </Typography>
                           <Box className="message-info">
                             <Typography variant="caption">
-                              {new Date(message.created_at).toLocaleTimeString()}
+                              {message.timestamp ? new Date(message.timestamp).toLocaleTimeString() : 
+                               message.created_at ? new Date(message.created_at).toLocaleTimeString() : 
+                               new Date().toLocaleTimeString()}
                             </Typography>
                             <Box className="token-info">
                               <Typography variant="caption">
@@ -322,6 +544,8 @@ function App() {
                           </Box>
                         </Box>
                       ))}
+                      
+                      {typing && <Box sx={{ p: 2, fontStyle: 'italic', color: 'text.secondary' }}>Claude is typing...</Box>}
                     </Box>
                   )}
                 </Paper>
@@ -335,7 +559,7 @@ function App() {
                       placeholder="Type your message here..."
                       value={newMessage}
                       onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                      onKeyDown={handleKeyPress}
                       disabled={loading}
                     />
                     <Button
