@@ -1,6 +1,8 @@
 import json
 import logging
-from typing import Dict, Any, List, Optional, Union, TypeVar, Generic
+from typing import Dict, Any, List, Optional, Union, TypeVar
+from datetime import datetime
+import decimal
 import redis.asyncio as redis
 from pydantic import BaseModel
 import asyncio
@@ -10,6 +12,20 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
+
+def json_serializer(obj):
+    """Custom JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, decimal.Decimal):
+        return float(obj)
+    elif hasattr(obj, '__dict__'):
+        return obj.__dict__
+    elif hasattr(obj, 'dict') and callable(getattr(obj, 'dict')):
+        return obj.dict()
+    else:
+        # Let the base class raise the TypeError
+        raise TypeError(f'Object of type {type(obj).__name__} is not JSON serializable')
 
 class RedisService:
     """Service for interacting with Redis cache"""
@@ -78,7 +94,7 @@ class RedisService:
             value = value.dict()
         
         if isinstance(value, (dict, list)):
-            value = json.dumps(value)
+            value = json.dumps(value, default=json_serializer)
         
         # Determine TTL
         if ttl is None:

@@ -22,10 +22,10 @@ class AnthropicService:
     """Service for interacting with the Anthropic API"""
     
     def __init__(self):
-        self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         self.default_model = "claude-3-5-haiku"
         # Initialize token counter
-        self.tokenizer = tiktoken.encoding_for_model("cl100k_base")  # Claude uses cl100k tokenizer
+        self.tokenizer = tiktoken.get_encoding("cl100k_base")  # Claude uses cl100k tokenizer
     
     def count_tokens(self, text: str) -> int:
         """Count the number of tokens in a text string"""

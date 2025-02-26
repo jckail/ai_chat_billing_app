@@ -232,11 +232,12 @@ async def create_message(
         }
     
     except Exception as e:
-        # Handle errors
+        # Handle errors with more detailed logging
         db.rollback()
+        logger.error(f"Detailed error processing message: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing message: {str(e)}"
+            detail=f"Error processing message. Check logs for details."
         )
 
 

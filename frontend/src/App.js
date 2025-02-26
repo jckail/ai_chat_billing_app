@@ -7,7 +7,7 @@ import { Add as AddIcon, Send as SendIcon, Refresh as RefreshIcon,
 import axios from 'axios';
 
 // API base URL
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 // Default user (for POC, no auth required)
 const DEFAULT_USER = {
@@ -64,7 +64,7 @@ function App() {
   const fetchThreads = async (userId) => {
     setLoadingThreads(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/threads?user_id=${userId}`);
+      const response = await axios.get(`${API_BASE_URL}/api/threads?user_id=${userId}`);
       setThreads(response.data);
       
       // If there are threads and no current thread, set the first thread as current
@@ -81,7 +81,7 @@ function App() {
   // Fetch messages for a thread
   const fetchMessages = async (threadId) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/messages/${threadId}/history`);
+      const response = await axios.get(`${API_BASE_URL}/api/messages/${threadId}/history`);
       setMessages(response.data);
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -91,7 +91,7 @@ function App() {
   // Fetch thread metrics
   const fetchThreadMetrics = async (threadId) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/billing/metrics/thread/${threadId}`);
+      const response = await axios.get(`${API_BASE_URL}/api/billing/metrics/thread/${threadId}`);
       setThreadMetrics(response.data);
     } catch (error) {
       console.error('Error fetching thread metrics:', error);
@@ -101,7 +101,7 @@ function App() {
   // Create a new thread
   const createThread = async () => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/threads`, {
+      const response = await axios.post(`${API_BASE_URL}/api/threads`, {
         user_id: user.user_id,
         title: `New Thread ${new Date().toLocaleString()}`,
         model_id: DEFAULT_MODEL.model_id
@@ -121,7 +121,7 @@ function App() {
     
     setLoading(true);
     try {
-      const response = await axios.post(`${API_BASE_URL}/messages`, {
+      const response = await axios.post(`${API_BASE_URL}/api/messages`, {
         thread_id: currentThread.thread_id,
         user_id: user.user_id,
         content: newMessage,
