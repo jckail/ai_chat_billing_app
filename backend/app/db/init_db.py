@@ -23,7 +23,7 @@ def init_db():
         logger.info("Creating default models")
         models = [
             {
-                "model_name": "claude-3-5-haiku",
+                "model_name": "claude-3-5-haiku-20241022",
                 "description": "Anthropic's Claude 3.5 Haiku - fast and efficient model",
                 "is_active": True
             },
@@ -51,7 +51,7 @@ def init_db():
         logger.info("Creating default token pricing")
         token_pricing = [
             {
-                "model_id": model_map["claude-3-5-haiku"],
+                "model_id": model_map["claude-3-5-haiku-20241022"],
                 "input_token_price": 0.00000025,  # $0.25 per million tokens
                 "output_token_price": 0.00000075,  # $0.75 per million tokens
                 "effective_from": datetime.now(timezone.utc),

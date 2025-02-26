@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 import logging
 import json
 import asyncio
+import traceback
 
 from app.db.database import get_db
 from app.models.transactions import UserThread, UserThreadMessage, MessageToken
@@ -234,7 +235,8 @@ async def create_message(
     except Exception as e:
         # Handle errors with more detailed logging
         db.rollback()
-        logger.error(f"Detailed error processing message: {str(e)}", exc_info=True)
+        logger.error(f"Detailed error processing message: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing message. Check logs for details."
@@ -374,6 +376,7 @@ async def create_message_stream(
         except Exception as e:
             # Handle errors
             yield json.dumps({
+                "type": "error",
                 "error": str(e),
                 "role": "assistant",
                 "content": f"Error: {str(e)}"

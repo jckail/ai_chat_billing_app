@@ -35,8 +35,8 @@ class AnthropicService:
     """Service for interacting with the Anthropic API"""
     
     def __init__(self):
-        self.client = anthropic.Client(api_key=settings.ANTHROPIC_API_KEY)
-        self.default_model = "claude-3-haiku-20240307"
+        self.client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self.default_model = "claude-3-5-haiku-20241022"  # Update if needed
         # Initialize token counter
         self.tokenizer = tiktoken.get_encoding("cl100k_base")  # Claude uses cl100k tokenizer
     
@@ -60,27 +60,6 @@ class AnthropicService:
         
         return TokenCount(input_tokens=input_tokens, output_tokens=0)
     
-    def _format_prompt(self, messages: List[Dict[str, str]]) -> str:
-        """Format messages into Claude prompt format for v0.5.0"""
-        prompt = ""
-        
-        for msg in messages:
-            role = msg["role"]
-            content = msg["content"]
-            
-            if role == "user":
-                prompt += f"\n\nHuman: {content}"
-            elif role == "assistant":
-                prompt += f"\n\nAssistant: {content}"
-            elif role == "system":
-                # System messages are handled differently in Claude API
-                # We'll prepend it to the first user message
-                continue
-        
-        # Add final assistant prompt
-        prompt += "\n\nAssistant:"
-        return prompt
-    
     async def create_chat_completion(
         self, 
         messages: List[Dict[str, str]], 
@@ -102,28 +81,46 @@ class AnthropicService:
         """
         model = model or self.default_model
         
-        # Format messages into Claude prompt format
-        prompt = self._format_prompt(messages)
+        # Format messages for the Messages API
+        formatted_messages = []
+        system_message = None
+        
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            
+            if role == "system":
+                system_message = content
+            else:
+                formatted_messages.append({"role": role, "content": content})
         
         # Count input tokens
-        input_token_count = self.count_tokens(prompt)
+        input_token_count = sum(self.count_tokens(msg["content"]) for msg in messages)
         
         try:
-            # Call Anthropic API - using the correct method for v0.5.0
-            response = self.client.completions.create(
-                prompt=prompt,
-                model=model,
-                max_tokens_to_sample=max_tokens,
-                temperature=temperature,
-                stop_sequences=["\n\nHuman:"]
+            # Create the request parameters
+            request_params = {
+                "model": model,
+                "messages": formatted_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
+            
+            # Only add system parameter if we have a system message
+            if system_message:
+                request_params["system"] = system_message
+            
+            # Call Anthropic API using the Messages API
+            response = await asyncio.to_thread(
+                lambda: self.client.messages.create(**request_params)
             )
             
             # Count output tokens
-            output_token_count = self.count_tokens(response.completion)
+            output_token_count = self.count_tokens(response.content[0].text)
             
             # Construct result
             result = {
-                "content": response.completion.strip(),
+                "content": response.content[0].text.strip(),
                 "role": "assistant",
                 "token_usage": {
                     "input_tokens": input_token_count,
@@ -171,43 +168,64 @@ class AnthropicService:
             Dictionary with response content chunks and token counts
         """
         model = model or self.default_model
-        
-        # Format messages into Claude prompt format
-        prompt = self._format_prompt(messages)
-        
+
+        # Format messages for the Messages API
+        formatted_messages = []
+        system_message = None
+
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+
+            if role == "system":
+                system_message = content
+            else:
+                formatted_messages.append({"role": role, "content": content})
+
         # Count input tokens
-        input_token_count = self.count_tokens(prompt)
+        input_token_count = sum(self.count_tokens(msg["content"]) for msg in messages)
+            
         output_token_count = 0
         full_response = ""
         
         try:
-            # Call Anthropic API with streaming - using the correct method for v0.5.0
-            with self.client.completions.stream(
-                prompt=prompt,
-                model=model,
-                max_tokens_to_sample=max_tokens,
-                temperature=temperature,
-                stop_sequences=["\n\nHuman:"]
-            ) as stream:
-                for completion in stream:
-                    if completion.completion:
-                        chunk_text = completion.completion[len(full_response):]
-                        if chunk_text:
-                            full_response = completion.completion
-                            chunk_tokens = self.count_tokens(chunk_text)
-                            output_token_count += chunk_tokens
-                            
-                            yield {
-                                "content": chunk_text,
-                                "role": "assistant",
-                                "token_usage": {
-                                    "input_tokens": input_token_count,
-                                    "output_tokens": output_token_count,
-                                    "total_tokens": input_token_count + output_token_count
-                                },
-                                "finish_reason": None,
-                                "model": model
-                            }
+            # Create request parameters
+            request_params = {
+                "model": model,
+                "messages": formatted_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True
+            }
+            
+            # Only add system parameter if we have a system message
+            if system_message:
+                request_params["system"] = system_message
+
+            # Stream the response
+            stream = await asyncio.to_thread(
+                lambda: self.client.messages.create(**request_params)
+            )
+            
+            # Process the streaming response
+            async for chunk in self._process_stream(stream):
+                if "content" in chunk and chunk["content"]:
+                    delta = chunk["content"]
+                    chunk_tokens = self.count_tokens(delta)
+                    output_token_count += chunk_tokens
+                    full_response += delta
+
+                    yield {
+                        "content": delta,
+                        "role": "assistant",
+                        "token_usage": {
+                            "input_tokens": input_token_count,
+                            "output_tokens": output_token_count,
+                            "total_tokens": input_token_count + output_token_count
+                        },
+                        "finish_reason": None,
+                        "model": model
+                    }
             
             # Final yield with complete information
             yield {
@@ -238,6 +256,23 @@ class AnthropicService:
                 "finish_reason": "error",
                 "model": model
             }
+    
+    async def _process_stream(self, stream):
+        """Process the Anthropic streaming response"""
+        buffer = ""
+        
+        for chunk in stream:
+            if hasattr(chunk, "type"):
+                # Handle different chunk types
+                if chunk.type == "content_block_delta" and hasattr(chunk, "delta"):
+                    delta_text = chunk.delta.text
+                    if delta_text:
+                        buffer += delta_text
+                        yield {"content": delta_text}
+        
+        # Return any remaining content
+        if buffer:
+            yield {"content": buffer}
 
 # Initialize a singleton instance
 anthropic_service = AnthropicService()

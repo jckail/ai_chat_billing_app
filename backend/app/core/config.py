@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         default="",
         env="ANTHROPIC_API_KEY"
     )
-    DEFAULT_MODEL: str = "claude-3-5-haiku"
+    DEFAULT_MODEL: str = "claude-3-5-haiku-20241022"
     
     # Default token pricing
     DEFAULT_INPUT_TOKEN_PRICE: float = Field(

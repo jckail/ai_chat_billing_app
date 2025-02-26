@@ -10,8 +10,9 @@ from uuid import uuid4
 from app.db.database import get_db
 from sqlalchemy.orm import Session
 from app.models.transactions import UserThread, UserThreadMessage
-from app.models.dimensions import DimUser
+from app.models.dimensions import DimUser, DimModel
 from app.services.anthropic_service import anthropic_service
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -158,8 +159,10 @@ async def handle_chat_message(
         # Process through anthropic service
         try:
             # Get model name
-            model = db.query(DimUser).filter(DimUser.user_id == user_id).first()
-            model_name = "claude-3-haiku-20240307"  # Default model
+            model = db.query(DimModel).filter(DimModel.model_id == model_id).first()
+            model_name = "claude-3-5-haiku-20241022"  # Default model
+            if model:
+                model_name = model.model_name
             
             async for chunk in anthropic_service.stream_chat_completion(
                 messages=formatted_messages,
@@ -176,7 +179,7 @@ async def handle_chat_message(
                         "chunk": chunk["content"],
                         "token_count": chunk["token_usage"]["output_tokens"]
                     })
-                await asyncio.sleep(0)  # Allow cancellation points
+                    await asyncio.sleep(0)  # Allow cancellation points
                 
             # Update the assistant message with full content
             assistant_message.content = full_response
@@ -197,12 +200,26 @@ async def handle_chat_message(
             
         except Exception as streaming_error:
             logger.error(f"Error streaming response: {str(streaming_error)}")
+            logger.error(traceback.format_exc())
+            
             await manager.send_json(client_id, {
-                "type": "ERROR",
-                "error": f"Error generating response: {str(streaming_error)}",
-                "status_code": 500
+                "type": "ASSISTANT_CHUNK", 
+                "message_id": assistant_message.message_id,
+                "chunk": f"Anthropic API Error: {str(streaming_error)}", "token_count": 0
             })
             
+            # Also send completion to ensure frontend handles it properly
+            await manager.send_json(client_id, {
+                "type": "ASSISTANT_COMPLETE",
+                "message": {
+                    "id": assistant_message.message_id,
+                    "role": "assistant",
+                    "content": f"Anthropic API Error: {str(streaming_error)}",
+                    "timestamp": assistant_message.created_at.isoformat(),
+                    "thread_id": thread_id,
+                    "user_id": user_id
+                }
+            })
     except Exception as e:
         logger.error(f"Error processing chat message: {str(e)}")
         await manager.send_json(client_id, {
