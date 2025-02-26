@@ -1,0 +1,8 @@
+streamlit==1.28.1
+pandas==2.1.2
+plotly==5.18.0
+redis==5.0.1
+sqlalchemy==2.0.23
+matplotlib==3.8.1
+altair==5.1.2
+python-dotenv==1.0.0
