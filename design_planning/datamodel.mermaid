@@ -1,0 +1,140 @@
+erDiagram
+    dim_users ||--o{ user_threads : "creates"
+    dim_users ||--o{ user_thread_messages : "sends"
+    dim_users ||--o{ user_invoices : "billed_to"
+    dim_users ||--o{ api_events : "generates"
+    
+    dim_models ||--o{ user_threads : "uses"
+    dim_models ||--o{ user_thread_messages : "processed_by"
+    dim_models ||--o{ dim_token_pricing : "has"
+    dim_models ||--o{ dim_resource_pricing : "has"
+    dim_models ||--o{ api_events : "used_in"
+    
+    dim_event_types ||--o{ dim_resource_pricing : "priced_as"
+    dim_event_types ||--o{ api_events : "categorizes"
+    
+    user_threads ||--o{ user_thread_messages : "contains"
+    user_threads ||--o{ user_invoices : "billed_as"
+    
+    user_thread_messages ||--o{ message_tokens : "generates"
+    user_thread_messages ||--o{ user_invoice_line_item : "billed_as"
+    user_thread_messages ||--o{ api_events : "triggers"
+    
+    message_tokens ||--o{ user_invoice_line_item : "billed_as"
+    
+    api_events ||--o{ resource_invoice_line_item : "billed_as"
+    
+    dim_token_pricing ||--o{ user_invoice_line_item : "priced_by"
+    
+    dim_resource_pricing ||--o{ resource_invoice_line_item : "priced_by"
+    
+    user_invoices ||--o{ user_invoice_line_item : "contains"
+    user_invoices ||--o{ resource_invoice_line_item : "contains"
+
+    dim_users {
+        int user_id PK
+        string username
+        string email
+        datetime created_at
+    }
+    
+    dim_models {
+        int model_id PK
+        string model_name
+        string description
+        boolean is_active
+    }
+    
+    dim_event_types {
+        int event_type_id PK
+        string event_name
+        string description
+        string unit_of_measure
+        boolean is_active
+    }
+    
+    dim_token_pricing {
+        int pricing_id PK
+        int model_id FK
+        decimal input_token_price
+        decimal output_token_price
+        datetime effective_from
+        datetime effective_to
+        boolean is_current
+    }
+    
+    dim_resource_pricing {
+        int resource_pricing_id PK
+        int model_id FK
+        int event_type_id FK
+        decimal unit_price
+        datetime effective_from
+        datetime effective_to
+        boolean is_current
+    }
+    
+    user_threads {
+        int thread_id PK
+        int user_id FK
+        string title
+        datetime created_at
+        datetime updated_at
+        int model_id FK
+        boolean is_active
+    }
+    
+    user_thread_messages {
+        int message_id PK
+        int thread_id FK
+        int user_id FK
+        string content
+        string role
+        datetime created_at
+        int model_id FK
+    }
+    
+    message_tokens {
+        int token_id PK
+        int message_id FK
+        string token_type
+        int token_count
+        datetime created_at
+    }
+    
+    api_events {
+        int event_id PK
+        int message_id FK
+        int user_id FK
+        int event_type_id FK
+        int model_id FK
+        decimal quantity
+        datetime created_at
+    }
+    
+    user_invoice_line_item {
+        int line_item_id PK
+        int message_id FK
+        int token_id FK
+        int pricing_id FK
+        decimal amount
+        datetime created_at
+    }
+    
+    resource_invoice_line_item {
+        int resource_line_item_id PK
+        int event_id FK
+        int user_id FK
+        int resource_pricing_id FK
+        decimal quantity
+        decimal amount
+        datetime created_at
+    }
+    
+    user_invoices {
+        int invoice_id PK
+        int user_id FK
+        int thread_id FK
+        decimal total_amount
+        datetime invoice_date
+        string status
+    }

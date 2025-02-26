@@ -1,0 +1,100 @@
+flowchart TD
+    %% User Interfaces
+    User((User))
+    ReactSPA[React SPA\nChat Interface]
+    StreamlitDashboard[Streamlit Dashboard\nReal-time Metrics]
+    
+    %% Backend Services
+    FastAPI[FastAPI Backend]
+    EventCollector[Event Collector Service]
+    KafkaProducers[Kafka Producers]
+    KafkaConsumers[Kafka Consumers]
+    
+    %% External Services
+    AnthropicAPI[Anthropic API\nClaude 3.5 Haiku]
+    
+    %% Data Storage
+    Redis[(Redis Cache)]
+    SQLite[(SQLite Database)]
+    
+    %% Message Broker
+    subgraph Kafka[Apache Kafka]
+        RawMessages[raw-messages]
+        LLMResponses[llm-responses]
+        TokenMetrics[token-metrics]
+        InferenceEvents[inference-events]
+        ProcessedEvents[processed-events]
+    end
+    
+    %% User Interactions
+    User -->|Interacts with| ReactSPA
+    User -->|Views| StreamlitDashboard
+    
+    %% Frontend to Backend
+    ReactSPA -->|API Requests| FastAPI
+    
+    %% Backend Processing
+    FastAPI -->|Sends Messages| AnthropicAPI
+    AnthropicAPI -->|Returns Responses| FastAPI
+    FastAPI -->|Publishes Messages| KafkaProducers
+    
+    %% Event Collection
+    FastAPI -->|Generates Events| EventCollector
+    EventCollector -->|Publishes Events| KafkaProducers
+    
+    %% Kafka Message Flow
+    KafkaProducers -->|Produces to| RawMessages
+    KafkaProducers -->|Produces to| LLMResponses
+    KafkaProducers -->|Produces to| TokenMetrics
+    KafkaProducers -->|Produces to| InferenceEvents
+    
+    %% Kafka Consumers
+    RawMessages -->|Consumed by| KafkaConsumers
+    LLMResponses -->|Consumed by| KafkaConsumers
+    TokenMetrics -->|Consumed by| KafkaConsumers
+    InferenceEvents -->|Consumed by| KafkaConsumers
+    KafkaConsumers -->|Produces to| ProcessedEvents
+    
+    %% Data Storage
+    KafkaConsumers -->|Updates| Redis
+    KafkaConsumers -->|Persists to| SQLite
+    
+    %% Dashboard Data Flow
+    Redis -->|Provides Data\n(15s SLA)| StreamlitDashboard
+    SQLite -->|Historical Data| StreamlitDashboard
+    
+    %% Container Deployment
+    subgraph DockerCompose[Docker Compose Environment]
+        ReactContainer[React Container]
+        FastAPIContainer[FastAPI Container]
+        KafkaContainer[Kafka Container]
+        ZookeeperContainer[Zookeeper Container]
+        RedisContainer[Redis Container]
+        SQLiteVolume[SQLite Volume]
+        StreamlitContainer[Streamlit Container]
+        EventCollectorContainer[Event Collector Container]
+    end
+    
+    %% Container Mappings
+    ReactSPA --- ReactContainer
+    FastAPI --- FastAPIContainer
+    Kafka --- KafkaContainer
+    Redis --- RedisContainer
+    SQLite --- SQLiteVolume
+    StreamlitDashboard --- StreamlitContainer
+    EventCollector --- EventCollectorContainer
+    
+    %% Styling
+    classDef frontend fill:#42b883,stroke:#333,stroke-width:1px,color:white;
+    classDef backend fill:#3498db,stroke:#333,stroke-width:1px,color:white;
+    classDef database fill:#f39c12,stroke:#333,stroke-width:1px,color:white;
+    classDef messaging fill:#9b59b6,stroke:#333,stroke-width:1px,color:white;
+    classDef external fill:#e74c3c,stroke:#333,stroke-width:1px,color:white;
+    classDef container fill:#95a5a6,stroke:#333,stroke-width:1px,color:white;
+    
+    class ReactSPA,StreamlitDashboard frontend;
+    class FastAPI,EventCollector,KafkaProducers,KafkaConsumers backend;
+    class Redis,SQLite database;
+    class Kafka,RawMessages,LLMResponses,TokenMetrics,InferenceEvents,ProcessedEvents messaging;
+    class AnthropicAPI external;
+    class ReactContainer,FastAPIContainer,KafkaContainer,ZookeeperContainer,RedisContainer,SQLiteVolume,StreamlitContainer,EventCollectorContainer container;
