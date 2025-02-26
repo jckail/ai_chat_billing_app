@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.database import engine, get_db
 from app.models import dimensions, transactions  # Import models to create tables
 from app.db.init_db import init_db
+from app.db.update_models import update_model_names
 from app.api import users, threads, messages, billing, websockets
 from app.services.message_processor import initialize_message_processors, shutdown_message_processors
 import logging
@@ -19,9 +20,9 @@ def setup_database():
     
     # Initialize seed data
     init_db()
-    
-    # Initialize seed data
-    init_db()
+
+    # Update model names to ensure correct date suffixes
+    update_model_names()
 
 # Initialize FastAPI app
 app = FastAPI(

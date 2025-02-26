@@ -112,7 +112,7 @@ def init_db():
         logger.info("Creating default resource pricing")
         resource_pricing = [
             {
-                "model_id": model_map["claude-3-5-haiku"],
+                "model_id": model_map["claude-3-5-haiku-20241022"],
                 "event_type_id": event_type_map["image_analysis"],
                 "unit_price": 0.00001,  # $0.01 per 1000 pixels
                 "effective_from": datetime.now(timezone.utc),

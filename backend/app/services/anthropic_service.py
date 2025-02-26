@@ -208,11 +208,11 @@ class AnthropicService:
             )
             
             # Process the streaming response
-            async for chunk in self._process_stream(stream):
-                if "content" in chunk and chunk["content"]:
-                    delta = chunk["content"]
-                    chunk_tokens = self.count_tokens(delta)
-                    output_token_count += chunk_tokens
+            for chunk in stream:
+                if hasattr(chunk, "delta") and hasattr(chunk.delta, "text") and chunk.delta.text:
+                    delta = chunk.delta.text
+                    chunk_tokens = self.count_tokens(delta) if delta else 0
+                    output_token_count += chunk_tokens if chunk_tokens else 0
                     full_response += delta
 
                     yield {
@@ -257,22 +257,5 @@ class AnthropicService:
                 "model": model
             }
     
-    async def _process_stream(self, stream):
-        """Process the Anthropic streaming response"""
-        buffer = ""
-        
-        for chunk in stream:
-            if hasattr(chunk, "type"):
-                # Handle different chunk types
-                if chunk.type == "content_block_delta" and hasattr(chunk, "delta"):
-                    delta_text = chunk.delta.text
-                    if delta_text:
-                        buffer += delta_text
-                        yield {"content": delta_text}
-        
-        # Return any remaining content
-        if buffer:
-            yield {"content": buffer}
-
 # Initialize a singleton instance
 anthropic_service = AnthropicService()

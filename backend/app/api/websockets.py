@@ -160,9 +160,17 @@ async def handle_chat_message(
         try:
             # Get model name
             model = db.query(DimModel).filter(DimModel.model_id == model_id).first()
-            model_name = "claude-3-5-haiku-20241022"  # Default model
+            default_model = "claude-3-5-haiku-20241022"  # Default model with date suffix
+            model_name = default_model
             if model:
                 model_name = model.model_name
+                
+                # Ensure the model name has the required date suffix
+                if model_name == "claude-3-5-haiku" and not model_name.endswith("-20241022"):
+                    model_name = "claude-3-5-haiku-20241022"
+                # Handle other models if needed
+                elif model_name.startswith("claude-") and not any(suffix in model_name for suffix in ["-20240229", "-20241022"]):
+                    model_name = default_model  # Fallback to default if model name doesn't have a date suffix
             
             async for chunk in anthropic_service.stream_chat_completion(
                 messages=formatted_messages,
