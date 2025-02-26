@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from typing import List, Dict, Any
+import logging
 import json
 import asyncio
 
@@ -11,8 +12,10 @@ from app.models.transactions import UserThread, UserThreadMessage, MessageToken
 from app.models.dimensions import DimUser, DimModel, DimTokenPricing
 from app.schemas.message import MessageCreate, MessageResponse, MessageWithCost
 from app.services.anthropic_service import anthropic_service
+from app.services.kafka_service import kafka_service
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -46,6 +49,22 @@ async def process_message_tokens(
     # TODO: Calculate and store billing information
     # This would involve getting the current pricing for the model
     # and creating invoice line items
+    
+    # Publish token metrics to Kafka
+    await kafka_service.publish_token_metrics({
+        "message_id": message_id,
+        "model_id": model_id,
+        "token_usage": token_usage,
+        "timestamp": asyncio.get_event_loop().time()
+    })
+
+
+@router.on_event("startup")
+async def startup_event():
+    """Initialize Kafka producer on startup"""
+    await kafka_service.initialize()
+    logger.info("Kafka service initialized for message API")
+
 
 
 @router.post("/", response_model=MessageWithCost)
@@ -92,6 +111,17 @@ async def create_message(
     )
     db.add(user_message)
     db.commit()
+    
+    # Publish raw message to Kafka
+    await kafka_service.publish_raw_message({
+        "message_id": user_message.message_id,
+        "thread_id": user_message.thread_id,
+        "user_id": user_message.user_id,
+        "content": user_message.content,
+        "role": user_message.role,
+        "model_id": user_message.model_id,
+        "created_at": user_message.created_at.isoformat()
+    })
     db.refresh(user_message)
     
     # Get previous messages for context (limit to last 10 for this example)
@@ -135,6 +165,18 @@ async def create_message(
         db.add(assistant_message)
         db.commit()
         db.refresh(assistant_message)
+
+        # Publish LLM response to Kafka
+        await kafka_service.publish_llm_response({
+            "message_id": assistant_message.message_id,
+            "thread_id": assistant_message.thread_id,
+            "user_id": assistant_message.user_id,
+            "content": assistant_message.content,
+            "role": assistant_message.role,
+            "model_id": assistant_message.model_id,
+            "created_at": assistant_message.created_at.isoformat(),
+            "token_usage": llm_response["token_usage"]
+        })
         
         # Process tokens in background
         background_tasks.add_task(
@@ -223,6 +265,17 @@ async def create_message_stream(
     )
     db.add(user_message)
     db.commit()
+
+    # Publish raw message to Kafka
+    await kafka_service.publish_raw_message({
+        "message_id": user_message.message_id,
+        "thread_id": user_message.thread_id,
+        "user_id": user_message.user_id,
+        "content": user_message.content,
+        "role": user_message.role,
+        "model_id": user_message.model_id,
+        "created_at": user_message.created_at.isoformat()
+    })
     db.refresh(user_message)
     
     # Get previous messages for context
@@ -288,6 +341,18 @@ async def create_message_stream(
             if assistant_message:
                 assistant_message.content = full_content
                 db.commit()
+
+                # Publish LLM response to Kafka
+                await kafka_service.publish_llm_response({
+                    "message_id": assistant_message.message_id,
+                    "thread_id": assistant_message.thread_id,
+                    "user_id": assistant_message.user_id,
+                    "content": assistant_message.content,
+                    "role": assistant_message.role,
+                    "model_id": assistant_message.model_id,
+                    "created_at": assistant_message.created_at.isoformat(),
+                    "token_usage": token_usage
+                })
             
             # Process tokens in background
             background_tasks.add_task(

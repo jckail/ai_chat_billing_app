@@ -6,6 +6,8 @@ from app.db.database import engine, get_db
 from app.models import dimensions, transactions  # Import models to create tables
 from app.db.init_db import init_db
 from app.api import users, threads, messages, billing
+from app.services.message_processor import initialize_message_processors, shutdown_message_processors
+import logging
 
 def setup_database():
     """Create tables and initialize with seed data"""
@@ -14,6 +16,9 @@ def setup_database():
     # Create all tables
     dimensions.Base.metadata.create_all(bind=engine)
     transactions.Base.metadata.create_all(bind=engine)
+    
+    # Initialize seed data
+    init_db()
     
     # Initialize seed data
     init_db()
@@ -42,6 +47,22 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(threads.router, prefix="/api/threads", tags=["threads"])
 app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize Kafka message processors on startup"""
+    await initialize_message_processors()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shut down Kafka message processors on shutdown"""
+    await shutdown_message_processors()
 
 @app.get("/")
 def read_root():

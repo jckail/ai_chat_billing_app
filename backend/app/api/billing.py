@@ -1,6 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+import asyncio
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, distinct, desc
+from datetime import datetime
 from typing import List, Dict, Any
 
 from app.db.database import get_db
@@ -18,13 +21,67 @@ from app.schemas.billing import (
     InvoiceLineItemResponse,
     BillingMetrics
 )
+from app.services.redis_service import redis_service
+from app.services.kafka_service import kafka_service
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.on_event("startup")
+async def startup_event():
+    """Initialize services on startup"""
+    await redis_service.initialize()
+    await kafka_service.initialize()
+    logger.info("Services initialized for billing API")
+
+
+async def generate_invoice_line_items(invoice_id: int, thread_id: int, db: Session):
+    """Generate line items for an invoice"""
+    # Get all messages for the thread
+    messages = db.query(UserThreadMessage).filter(
+        UserThreadMessage.thread_id == thread_id
+    ).all()
+    
+    # For each message, get its token usage
+    for message in messages:
+        tokens = db.query(MessageToken).filter(
+            MessageToken.message_id == message.message_id
+        ).all()
+        
+        # Get current pricing
+        pricing = db.query(DimTokenPricing).filter(
+            DimTokenPricing.model_id == message.model_id,
+            DimTokenPricing.is_current == True
+        ).first()
+        
+        if not pricing:
+            # Use default pricing if none found
+            continue
+        
+        # Create line items for each token record
+        for token in tokens:
+            # Calculate amount based on token type
+            if token.token_type == "input":
+                amount = token.token_count * pricing.input_token_price
+            else:  # output
+                amount = token.token_count * pricing.output_token_price
+            
+            # Create invoice line item
+            line_item = UserInvoiceLineItem(
+                message_id=message.message_id,
+                token_id=token.token_id,
+                pricing_id=pricing.pricing_id,
+                amount=amount
+            )
+            db.add(line_item)
+    
+    db.commit()
+
+
 @router.get("/metrics/user/{user_id}", response_model=List[BillingMetrics])
-def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
+async def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
     """Get billing metrics for all threads of a user"""
     # Check if user exists
     user = db.query(DimUser).filter(DimUser.user_id == user_id).first()
@@ -33,6 +90,12 @@ def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+    
+    # Try to get metrics from cache
+    cached_metrics = await redis_service.get_user_metrics(user_id)
+    if cached_metrics:
+        logger.info(f"Using cached metrics for user {user_id}")
+        return cached_metrics
     
     # Get all threads for this user
     threads = db.query(UserThread).filter(UserThread.user_id == user_id).all()
@@ -105,11 +168,16 @@ def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
             "last_activity": last_activity or thread.created_at
         })
     
+    # Cache the metrics
+    if result:
+        asyncio.create_task(redis_service.cache_user_metrics(user_id, result))
+    
     return result
 
 
 @router.get("/metrics/thread/{thread_id}", response_model=BillingMetrics)
-def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_db)):
+async def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_db)):
+
     """Get billing metrics for a specific thread"""
     # Check if thread exists
     thread = db.query(UserThread).filter(UserThread.thread_id == thread_id).first()
@@ -118,6 +186,12 @@ def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Thread not found"
         )
+    
+    # Try to get metrics from cache
+    cached_metrics = await redis_service.get_thread_metrics(thread_id)
+    if cached_metrics:
+        logger.info(f"Using cached metrics for thread {thread_id}")
+        return cached_metrics
     
     # Get message count
     message_count = db.query(func.count(UserThreadMessage.message_id)) \
@@ -167,7 +241,7 @@ def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_db)):
         .filter(UserThreadMessage.thread_id == thread_id) \
         .scalar()
     
-    return {
+    metrics = {
         "thread_id": thread_id,
         "total_messages": message_count,
         "total_input_tokens": input_tokens,
@@ -175,10 +249,15 @@ def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_db)):
         "total_cost": total_cost,
         "last_activity": last_activity or thread.created_at
     }
+    
+    # Cache the metrics
+    asyncio.create_task(redis_service.cache_thread_metrics(thread_id, metrics))
+    
+    return metrics
 
 
 @router.post("/generate-invoice/thread/{thread_id}", response_model=InvoiceResponse)
-def generate_invoice_for_thread(thread_id: int, db: Session = Depends(get_db)):
+async def generate_invoice_for_thread(thread_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Generate an invoice for a specific thread"""
     # Check if thread exists
     thread = db.query(UserThread).filter(UserThread.thread_id == thread_id).first()
@@ -195,11 +274,14 @@ def generate_invoice_for_thread(thread_id: int, db: Session = Depends(get_db)):
     
     if existing_invoice:
         # Return existing invoice
+        logger.info(f"Returning existing invoice for thread {thread_id}")
         return existing_invoice
     
     # Get the metrics to calculate total cost
-    metrics = get_thread_billing_metrics(thread_id, db)
-    
+    metrics = await get_thread_billing_metrics(thread_id, db)
+    if not isinstance(metrics, dict):
+        metrics = metrics.dict()
+        
     # Create a new invoice
     invoice = UserInvoice(
         user_id=thread.user_id,
@@ -211,12 +293,17 @@ def generate_invoice_for_thread(thread_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(invoice)
     
-    # TODO: In a real implementation, we would generate line items
-    # for each message and token usage, but for this POC, we'll skip that step
+    # Generate line items in the background
+    background_tasks.add_task(
+        generate_invoice_line_items,
+        invoice.invoice_id,
+        thread_id,
+        db
+    )
+    
+    logger.info(f"Created invoice {invoice.invoice_id} for thread {thread_id}")
     
     return invoice
-
-
 @router.get("/invoices/user/{user_id}", response_model=List[InvoiceResponse])
 def get_user_invoices(user_id: int, db: Session = Depends(get_db)):
     """Get all invoices for a user"""
