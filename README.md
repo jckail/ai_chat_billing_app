@@ -6,6 +6,10 @@ A proof-of-concept application for tracking and billing AI chat thread interacti
 
 ![Application Interface Example](design_planning/outputExample.png)
 
+## 💰 Create Invoice
+
+![Application Interface Example](design_planning/sample_app_invoice.png)
+
 ## 🎯 Purpose
 
 This application is designed to solve the challenge of monitoring and billing for AI model usage in chat-based applications. As organizations increasingly deploy AI assistants, understanding the costs associated with these interactions becomes critical for business planning and cost management.
