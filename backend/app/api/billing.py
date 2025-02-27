@@ -234,6 +234,24 @@ async def get_thread_billing_metrics(
         .filter(UserThreadMessage.thread_id == thread_id) \
         .scalar() or 0
     
+    # First try to get token counts from UserThreadMessage table (more reliable)
+    user_input_tokens = db.query(func.sum(UserThreadMessage.token_count)) \
+        .filter(UserThreadMessage.thread_id == thread_id, 
+                UserThreadMessage.role == 'user',
+                UserThreadMessage.token_count != None) \
+        .scalar() or 0
+    
+    assistant_output_tokens = db.query(func.sum(UserThreadMessage.token_count)) \
+        .filter(UserThreadMessage.thread_id == thread_id, 
+                UserThreadMessage.role == 'assistant',
+                UserThreadMessage.token_count != None) \
+        .scalar() or 0
+        
+    # Get message count
+    message_count = db.query(func.count(UserThreadMessage.message_id)) \
+        .filter(UserThreadMessage.thread_id == thread_id) \
+        .scalar() or 0
+    
     # Get token counts
     token_metrics = db.query(
             MessageToken.token_type,
@@ -245,16 +263,23 @@ async def get_thread_billing_metrics(
         .all()
     
     # Initialize token counts
-    input_tokens = 0
-    output_tokens = 0
+    input_tokens = user_input_tokens
+    output_tokens = assistant_output_tokens
     
-    # Process token metrics
-    for token_type, count in token_metrics:
-        if token_type == "input":
-            input_tokens = count
-        elif token_type == "output":
-            output_tokens = count
-    
+    # Only use MessageToken table if we didn't get tokens from UserThreadMessage
+    if input_tokens == 0 and output_tokens == 0:
+        logger.warning(f"[BILLING] No tokens found in UserThreadMessage, checking MessageToken table")
+        # Process token metrics from MessageToken table
+        for token_type, count in token_metrics:
+            if token_type == "input":
+                input_tokens = count
+            elif token_type == "output":
+                output_tokens = count
+                
+        logger.info(f"[BILLING] Using token counts from MessageToken: input={input_tokens}, output={output_tokens}")
+    else:
+        logger.info(f"[BILLING] Using token counts from UserThreadMessage: input={input_tokens}, output={output_tokens}")
+                
     # Get the latest pricing
     pricing = db.query(DimTokenPricing) \
         .filter(DimTokenPricing.is_current == True) \

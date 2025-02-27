@@ -150,9 +150,10 @@ function App() {
               // Use refresh=true to force a fresh calculation
               setRefreshingMetrics(true);
               fetchThreadMetrics(currentThread.thread_id, true)
-                .then(() => setRefreshingMetrics(false));
+                .then(() => setRefreshingMetrics(false))
+                .catch(err => console.error("[BILLING] Error refreshing metrics:", err));
               console.log("[BILLING] Fetching updated thread metrics after message completion (with refresh)");
-            }, 3000); // 3 second delay to allow backend processing time
+            }, 5000); // 5 second delay to ensure backend processing completes
           }
           break;
           
@@ -288,9 +289,9 @@ function App() {
       setTimeout(() => {
         console.log("[BILLING] Fetching metrics after WebSocket message send");
         setRefreshingMetrics(true);
-        fetchThreadMetrics(currentThread.thread_id, true)
+        fetchThreadMetricsWithRetry(currentThread.thread_id, true, 0)
           .then(() => setRefreshingMetrics(false));
-      }, 5000);
+      }, 8000); // Increased from 5 to 8 seconds to ensure backend has time to process
     }
   };
 
@@ -315,15 +316,41 @@ function App() {
   
   // Fetch thread metrics
   const fetchThreadMetrics = async (threadId, refresh = false) => {
+    return fetchThreadMetricsWithRetry(threadId, refresh, 0);
+  };
+  
+  // Helper function with retry logic
+  const fetchThreadMetricsWithRetry = async (threadId, refresh = false, retryCount = 0) => {
     const url = `${API_BASE_URL}/billing/metrics/thread/${threadId}${refresh ? '?refresh=true' : ''}`;
     console.log(`[BILLING] Fetching metrics from: ${url}`);
     try {
       const response = await axios.get(url);
       console.log("[BILLING] Thread metrics received:", response.data, refresh ? "(fresh calculation)" : "(from cache)");
+      
+      // Check if metrics show zero tokens but we have messages
+      if (response.data.total_input_tokens === 0 && 
+          response.data.total_output_tokens === 0 && 
+          response.data.total_messages > 0 && 
+          retryCount < 3) {
+        
+        console.log(`[BILLING] Metrics show zero tokens but thread has ${response.data.total_messages} messages. Retrying...`);
+        // Wait and retry with a forced refresh
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        return fetchThreadMetricsWithRetry(threadId, true, retryCount + 1);
+      }
+      
       setThreadMetrics(response.data);
       return response.data;
     } catch (error) {
       console.error('[BILLING] Error fetching thread metrics:', error);
+      
+      // On error, retry if we haven't tried too many times
+      if (retryCount < 3) {
+        console.log(`[BILLING] Retrying metrics fetch (attempt ${retryCount + 1}/3)`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return fetchThreadMetricsWithRetry(threadId, refresh, retryCount + 1);
+      }
+      
       return null;
     }
   };
@@ -392,8 +419,13 @@ function App() {
     if (newValue === 1 && currentThread) {
       console.log("[BILLING] Tab changed to billing details, refreshing metrics");
       setRefreshingMetrics(true);
-      fetchThreadMetrics(currentThread.thread_id, true)
-        .then(() => setRefreshingMetrics(false));
+      // Use the retry version for more reliability
+      fetchThreadMetricsWithRetry(currentThread.thread_id, true, 0)
+        .then(() => setRefreshingMetrics(false))
+        .catch(err => {
+          console.error("[BILLING] Error refreshing metrics:", err);
+          setRefreshingMetrics(false);
+        });
     }
   };
 
@@ -671,8 +703,10 @@ function App() {
                         <Button 
                           onClick={() => {
                             setRefreshingMetrics(true);
-                            fetchThreadMetrics(currentThread.thread_id, true)
-                              .then(() => setRefreshingMetrics(false));
+                            // Use the retry version with force refresh
+                            fetchThreadMetricsWithRetry(currentThread.thread_id, true, 0)
+                              .then(() => setRefreshingMetrics(false))
+                              .catch(() => setRefreshingMetrics(false));
                           }}
                           startIcon={refreshingMetrics ? <CircularProgress size={16} /> : <RefreshIcon />} 
                           size="small"
@@ -705,6 +739,21 @@ function App() {
                           <Typography variant="subtitle2">Total Cost</Typography>
                           <Typography variant="subtitle2" color="primary">
                             {formatCurrency(threadMetrics.total_cost)}
+                          </Typography>
+                        </Box>
+                        
+                        {/* Debug Information Box */}
+                        <Box sx={{ mt: 2, p: 2, bgcolor: '#f5f5f5', borderRadius: 1, fontSize: '0.8rem' }}>
+                          <Typography variant="subtitle2" gutterBottom>Debug Information:</Typography>
+                          <Typography variant="caption" component="div">
+                            Last metrics update: {new Date().toLocaleTimeString()}
+                          </Typography>
+                          <Typography variant="caption" component="div">
+                            Messages: {threadMetrics.total_messages}
+                          </Typography>
+                          <Typography variant="caption" component="div">
+                            Raw cost calculation: ({threadMetrics.total_input_tokens} × ${TOKEN_PRICING.INPUT_PRICE}) + 
+                            ({threadMetrics.total_output_tokens} × ${TOKEN_PRICING.OUTPUT_PRICE}) = ${formatCurrency(threadMetrics.total_cost)}
                           </Typography>
                         </Box>
                       </Paper>

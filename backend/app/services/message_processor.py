@@ -109,77 +109,88 @@ async def handle_token_metrics(data: Dict[str, Any], db: Optional[Session] = Non
         input_tokens = token_usage.get('input_tokens', 0)
         output_tokens = token_usage.get('output_tokens', 0)
 
+        # Update the message's token_count field directly for easier UI display
+        if message.role == 'user':
+            message.token_count = input_tokens
+        else:
+            message.token_count = output_tokens
+        db.flush()
+
         logger.info(f"[BILLING] Token usage for message {message_id}: Input={input_tokens}, Output={output_tokens}")
         
+        # Delete any existing token records for this message to avoid duplicates
         if input_tokens > 0:
-            # Get or create token record
-            token_record = db.query(MessageToken).filter(
+            db.query(MessageToken).filter(
                 MessageToken.message_id == message_id,
                 MessageToken.token_type == "input"
-            ).first()
+            ).delete()
             
-            if not token_record:
-                logger.warning(f"Token record not found for message {message_id}, creating one")
-                token_record = MessageToken(
-                    message_id=message_id,
-                    token_type="input",
-                    token_count=input_tokens
-                )
-                db.add(token_record)
-                db.flush()  # Get the ID without committing
+            # Create a new token record
+            token_record = MessageToken(
+                message_id=message_id,
+                token_type="input",
+                token_count=input_tokens
+            )
+            db.add(token_record)
+            db.flush()  # Get the ID without committing
             
             # Create invoice line item
             if pricing:
+                amount = round(input_tokens * float(input_price), 6)
                 line_item = UserInvoiceLineItem(
                     message_id=message_id,
                     token_id=token_record.token_id,
                     pricing_id=pricing.pricing_id,
-                    amount=input_tokens * input_price
+                    amount=amount
                 )
                 db.add(line_item)
         
         if output_tokens > 0:
-            # Get or create token record
-            token_record = db.query(MessageToken).filter(
+            # Delete any existing output token records for this message
+            db.query(MessageToken).filter(
                 MessageToken.message_id == message_id,
                 MessageToken.token_type == "output"
-            ).first()
+            ).delete()
             
-            if not token_record:
-                logger.warning(f"Token record not found for message {message_id}, creating one")
-                token_record = MessageToken(
-                    message_id=message_id,
-                    token_type="output",
-                    token_count=output_tokens
-                )
-                db.add(token_record)
-                db.flush()  # Get the ID without committing
+            # Create a new token record
+            token_record = MessageToken(
+                message_id=message_id,
+                token_type="output",
+                token_count=output_tokens
+            )
+            db.add(token_record)
+            db.flush()  # Get the ID without committing
             
             # Create invoice line item
             if pricing:
+                amount = round(output_tokens * float(output_price), 6)
                 line_item = UserInvoiceLineItem(
                     message_id=message_id,
                     token_id=token_record.token_id,
                     pricing_id=pricing.pricing_id,
-                    amount=output_tokens * output_price
+                    amount=amount
                 )
                 db.add(line_item)
         
         # Commit changes
         db.commit()
+        logger.info(f"[BILLING] Successfully stored token metrics for message {message_id}")
 
         # Invalidate and then immediately recalculate and update thread metrics
         logger.info(f"[BILLING] Invalidating cached metrics for thread {message.thread_id}")
         invalidate_result1 = await redis_service.delete_value('thread_metrics', message.thread_id)
         invalidate_result2 = await redis_service.delete_value('user_metrics', message.user_id)
         logger.info(f"[BILLING] Cache invalidation results - thread: {invalidate_result1}, user: {invalidate_result2}")
-        
-        # Immediately recalculate and cache new thread metrics
+
+        # Add a small delay before recalculating to ensure DB consistency
+        await asyncio.sleep(1)        
         logger.info(f"[BILLING] Recalculating metrics for thread {message.thread_id}")
         await update_thread_metrics_cache(message.thread_id, db)
         
     except Exception as e:
         logger.error(f"[BILLING] Error processing token metrics: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         db.rollback()
     finally:
         if close_db:
