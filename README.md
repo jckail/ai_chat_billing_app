@@ -26,6 +26,10 @@ The system provides a complete billing pipeline for AI chat applications, making
 ### Data Model
 [View Complete Data Model](https://github.com/jckail/ai_chat_billing_app/blob/main/design_planning/datamodel.svg)
 
+### End Points
+[View Endpoints](https://github.com/jckail/ai_chat_billing_app/blob/main/design_planning/endpoints.png)
+
+
 ## 🔍 Overview
 
 This project implements a comprehensive system to track chat interactions with AI models (primarily Anthropic's Claude), calculate real-time costs based on token usage, and provide analytics through a dedicated dashboard. The application consists of several components:
