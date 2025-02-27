@@ -60,7 +60,7 @@ The application follows a microservices architecture with the following componen
 ## 📋 Prerequisites
 
 - Docker and Docker Compose
-- Anthropic API key
+- Anthropic API key - [Anthropic.com](https://console.anthropic.com/settings/keys)
 - Git
 
 ## 🚀 Getting Started
@@ -76,6 +76,37 @@ cd ai_thread_billing
 
 ```bash
 cp .env.sample .env
+```
+
+#### Sample `.env`
+```
+# API Configuration
+DEBUG=false
+
+# Database Connection
+DATABASE_URL=sqlite:///data/billing.db
+
+# Redis Connection
+REDIS_URL=redis://redis:6379/0
+
+# Kafka Configuration
+KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+
+# Anthropic API Configuration
+ANTHROPIC_API_KEY=YOUR_API_KEY
+
+# Token Pricing (default values, $ per token)
+DEFAULT_INPUT_TOKEN_PRICE=0.00000025
+DEFAULT_OUTPUT_TOKEN_PRICE=0.00000075
+
+# Event Collector Settings
+BATCH_SIZE=10
+BATCH_INTERVAL_SECONDS=5
+
+# Streamlit Settings
+STREAMLIT_SERVER_PORT=8501
+STREAMLIT_SERVER_HEADLESS=true
+STREAMLIT_SERVER_ENABLE_CORS=false
 ```
 
 Edit the `.env` file and add your Anthropic API key.
