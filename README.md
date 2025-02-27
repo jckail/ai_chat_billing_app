@@ -118,6 +118,8 @@ docker-compose build
 docker-compose up
 ```
 
+![What Docker Should Look Like](design_planning/dockercontainers.png)
+
 ### 4. Access the Applications
 
 - Backend API: http://localhost:8000
