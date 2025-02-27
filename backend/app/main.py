@@ -6,6 +6,7 @@ from app.db.database import engine, get_db
 from app.models import dimensions, transactions  # Import models to create tables
 from app.db.init_db import init_db
 from app.db.update_models import update_model_names
+from app.db.add_token_count_column import add_token_count_column
 from app.api import users, threads, messages, billing, websockets
 from app.services.message_processor import initialize_message_processors, shutdown_message_processors
 import logging
@@ -23,6 +24,9 @@ def setup_database():
 
     # Update model names to ensure correct date suffixes
     update_model_names()
+
+    # Add token_count column to UserThreadMessage table if it doesn't exist
+    add_token_count_column()
 
 # Initialize FastAPI app
 app = FastAPI(

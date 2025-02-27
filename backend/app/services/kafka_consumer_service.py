@@ -53,7 +53,7 @@ class KafkaConsumerService:
                     # Start background task to process messages
                     asyncio.create_task(self._consume_messages(topic_key, consumer, handler))
                     
-                    logger.info(f"Started consumer for topic: {topic}")
+                    logger.info(f"[KAFKA] Started consumer for topic: {topic}")
                 except Exception as e:
                     logger.error(f"Failed to initialize consumer for topic {topic}: {str(e)}")
     
@@ -64,7 +64,7 @@ class KafkaConsumerService:
         # Stop all consumers
         for topic_key, consumer in self.consumers.items():
             await consumer.stop()
-            logger.info(f"Stopped consumer for topic: {self.topics[topic_key]}")
+            logger.info(f"[KAFKA] Stopped consumer for topic: {self.topics[topic_key]}")
         
         self.consumers = {}
     
@@ -88,6 +88,7 @@ class KafkaConsumerService:
             # Continue consuming until stop_event is set
             while not self.stop_event.is_set():
                 try:
+                    logger.debug(f"[KAFKA] Waiting for messages from {topic}")
                     # Try to fetch messages with timeout
                     async for msg in consumer:
                         if self.stop_event.is_set():
@@ -97,8 +98,16 @@ class KafkaConsumerService:
                             # Create database session
                             db = SessionLocal()
                             
-                            # Process message with handler
+                            # Log message receipt
+                            message_id = msg.value.get('message_id', 'unknown')
+                            thread_id = msg.value.get('thread_id', 'unknown')
+                            logger.info(f"[KAFKA] Processing {topic} message: {message_id} for thread: {thread_id}")
+                            
+                            # Process message with handler and record timing
+                            start_time = asyncio.get_event_loop().time()
                             await handler(msg.value, db)
+                            process_time = asyncio.get_event_loop().time() - start_time
+                            logger.info(f"[KAFKA] Processed {topic} message in {process_time:.4f}s: {message_id}")
                             
                             # Close session
                             db.close()
@@ -107,14 +116,14 @@ class KafkaConsumerService:
                 
                 except Exception as e:
                     if not self.stop_event.is_set():
-                        logger.error(f"Consumer error for {topic}: {str(e)}")
+                        logger.error(f"[KAFKA] Consumer error for {topic}: {str(e)}")
                         # Wait a bit before retrying
                         await asyncio.sleep(5)
         
         except asyncio.CancelledError:
-            logger.info(f"Consumption task for {topic} was cancelled")
+            logger.info(f"[KAFKA] Consumption task for {topic} was cancelled")
         
-        logger.info(f"Stopped consuming from {topic}")
+        logger.info(f"[KAFKA] Stopped consuming from {topic}")
 
 # Initialize a singleton instance
 kafka_consumer_service = KafkaConsumerService()

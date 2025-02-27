@@ -13,11 +13,27 @@ from app.models.transactions import UserThread, UserThreadMessage, MessageToken
 from app.models.dimensions import DimUser, DimModel, DimTokenPricing
 from app.schemas.message import MessageCreate, MessageResponse, MessageWithCost
 from app.services.anthropic_service import anthropic_service
+from app.services.redis_service import redis_service
 from app.services.kafka_service import kafka_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def force_refresh_metrics(thread_id: int):
+    """Force refresh metrics for a thread after message processing"""
+    # Wait a moment to allow token metrics to be processed
+    await asyncio.sleep(2)
+    
+    # Clear the cache for this thread
+    logger.info(f"[MESSAGING] Forcing metrics refresh for thread {thread_id}")
+    result = await redis_service.force_refresh_thread_metrics(thread_id)
+    
+    if result:
+        logger.info(f"[MESSAGING] Successfully invalidated metrics cache for thread {thread_id}")
+    else:
+        logger.warning(f"[MESSAGING] Failed to invalidate metrics cache for thread {thread_id}")
 
 
 async def process_message_tokens(
@@ -47,17 +63,39 @@ async def process_message_tokens(
     
     db.commit()
     
-    # TODO: Calculate and store billing information
-    # This would involve getting the current pricing for the model
-    # and creating invoice line items
-    
-    # Publish token metrics to Kafka
+    # Publish token metrics to Kafka with explicit logging
+    logger.info(f"[MESSAGING] Publishing token metrics for message {message_id}")
     await kafka_service.publish_token_metrics({
         "message_id": message_id,
         "model_id": model_id,
         "token_usage": token_usage,
-        "timestamp": asyncio.get_event_loop().time()
+        "timestamp": str(asyncio.get_event_loop().time())
     })
+
+
+async def prepare_messages_for_llm(thread_id: int, new_message_content: str, db: Session):
+    """Prepare messages for the LLM API with context from thread history"""
+    # Get previous messages for context (limit to last 10 for this example)
+    previous_messages = (
+        db.query(UserThreadMessage)
+        .filter(UserThreadMessage.thread_id == thread_id)
+        .order_by(UserThreadMessage.created_at)
+        .limit(10)
+        .all()
+    )
+    
+    # Format messages for Anthropic API
+    formatted_messages = []
+    for prev_msg in previous_messages:
+        formatted_messages.append({
+            "role": prev_msg.role,
+            "content": prev_msg.content
+        })
+    
+    # Add current message
+    formatted_messages.append({"role": "user", "content": new_message_content})
+    
+    return formatted_messages
 
 
 @router.on_event("startup")
@@ -114,6 +152,7 @@ async def create_message(
     db.commit()
     
     # Publish raw message to Kafka
+    logger.info(f"[MESSAGING] Publishing user message {user_message.message_id} to Kafka")
     await kafka_service.publish_raw_message({
         "message_id": user_message.message_id,
         "thread_id": user_message.thread_id,
@@ -125,28 +164,11 @@ async def create_message(
     })
     db.refresh(user_message)
     
-    # Get previous messages for context (limit to last 10 for this example)
-    previous_messages = (
-        db.query(UserThreadMessage)
-        .filter(UserThreadMessage.thread_id == message.thread_id)
-        .order_by(UserThreadMessage.created_at)
-        .limit(10)
-        .all()
-    )
-    
-    # Format messages for Anthropic API
-    formatted_messages = []
-    for prev_msg in previous_messages:
-        formatted_messages.append({
-            "role": prev_msg.role,
-            "content": prev_msg.content
-        })
-    
-    # Add current message
-    formatted_messages.append({
-        "role": "user",
-        "content": message.content
-    })
+    # Get formatted messages for LLM API
+    formatted_messages = await prepare_messages_for_llm(message.thread_id, message.content, db)
+
+    # Count tokens for user input message
+    input_token_count = anthropic_service.count_tokens(message.content)
     
     try:
         # Call Anthropic API
@@ -167,6 +189,7 @@ async def create_message(
         db.commit()
         db.refresh(assistant_message)
 
+        logger.info(f"[MESSAGING] Publishing LLM response {assistant_message.message_id} to Kafka")
         # Publish LLM response to Kafka
         await kafka_service.publish_llm_response({
             "message_id": assistant_message.message_id,
@@ -184,7 +207,7 @@ async def create_message(
             process_message_tokens,
             db,
             user_message.message_id,
-            {"input_tokens": llm_response["token_usage"]["input_tokens"], "output_tokens": 0},
+            {"input_tokens": input_token_count, "output_tokens": 0},
             message.model_id
         )
         background_tasks.add_task(
@@ -194,6 +217,9 @@ async def create_message(
             {"input_tokens": 0, "output_tokens": llm_response["token_usage"]["output_tokens"]},
             message.model_id
         )
+        
+        # Force refresh metrics in the background
+        background_tasks.add_task(force_refresh_metrics, message.thread_id)
         
         # Get current pricing
         pricing = (
@@ -214,9 +240,14 @@ async def create_message(
             output_price = pricing.output_token_price
         
         # Calculate costs
-        input_cost = llm_response["token_usage"]["input_tokens"] * input_price
+        input_cost = input_token_count * input_price
         output_cost = llm_response["token_usage"]["output_tokens"] * output_price
         total_cost = input_cost + output_cost
+        
+        # Update token counts in the message records for the UI
+        user_message.token_count = input_token_count
+        assistant_message.token_count = llm_response["token_usage"]["output_tokens"]
+        db.commit()
         
         # Return response with cost info
         return {
@@ -227,7 +258,7 @@ async def create_message(
             "role": assistant_message.role,
             "created_at": assistant_message.created_at,
             "model_id": assistant_message.model_id,
-            "input_tokens": llm_response["token_usage"]["input_tokens"],
+            "input_tokens": input_token_count,
             "output_tokens": llm_response["token_usage"]["output_tokens"],
             "total_cost": total_cost
         }
@@ -270,6 +301,7 @@ async def create_message_stream(
     db.commit()
 
     # Publish raw message to Kafka
+    logger.info(f"[MESSAGING] Publishing streamed user message {user_message.message_id} to Kafka")
     await kafka_service.publish_raw_message({
         "message_id": user_message.message_id,
         "thread_id": user_message.thread_id,
@@ -281,22 +313,15 @@ async def create_message_stream(
     })
     db.refresh(user_message)
     
-    # Get previous messages for context
-    previous_messages = (
-        db.query(UserThreadMessage)
-        .filter(UserThreadMessage.thread_id == message.thread_id)
-        .order_by(UserThreadMessage.created_at)
-        .limit(10)
-        .all()
-    )
+    # Get formatted messages for LLM API
+    formatted_messages = await prepare_messages_for_llm(message.thread_id, message.content, db)
+
+    # Count tokens for user input message
+    input_token_count = anthropic_service.count_tokens(message.content)
     
-    # Format messages for Anthropic API
-    formatted_messages = []
-    for prev_msg in previous_messages:
-        formatted_messages.append({
-            "role": prev_msg.role,
-            "content": prev_msg.content
-        })
+    # Update the user message token count immediately
+    user_message.token_count = input_token_count
+    db.commit()
     
     # Get model
     model = db.query(DimModel).filter(DimModel.model_id == message.model_id).first()
@@ -322,7 +347,7 @@ async def create_message_stream(
     # Streaming response generator
     async def response_generator():
         full_content = ""
-        token_usage = {"input_tokens": 0, "output_tokens": 0}
+        token_usage = {"input_tokens": input_token_count, "output_tokens": 0}
         
         try:
             async for chunk in anthropic_service.stream_chat_completion(
@@ -343,8 +368,10 @@ async def create_message_stream(
             assistant_message = db.query(UserThreadMessage).get(assistant_message_id)
             if assistant_message:
                 assistant_message.content = full_content
+                assistant_message.token_count = token_usage["output_tokens"]
                 db.commit()
 
+                logger.info(f"[MESSAGING] Publishing streamed LLM response {assistant_message.message_id} to Kafka")
                 # Publish LLM response to Kafka
                 await kafka_service.publish_llm_response({
                     "message_id": assistant_message.message_id,
@@ -362,7 +389,7 @@ async def create_message_stream(
                 process_message_tokens,
                 db,
                 user_message.message_id,
-                {"input_tokens": token_usage["input_tokens"], "output_tokens": 0},
+                {"input_tokens": input_token_count, "output_tokens": 0},
                 message.model_id
             )
             background_tasks.add_task(
@@ -372,6 +399,9 @@ async def create_message_stream(
                 {"input_tokens": 0, "output_tokens": token_usage["output_tokens"]},
                 message.model_id
             )
+            
+            # Force refresh metrics after message is processed
+            background_tasks.add_task(force_refresh_metrics, message.thread_id)
         
         except Exception as e:
             # Handle errors

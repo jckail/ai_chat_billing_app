@@ -34,7 +34,7 @@ async def startup_event():
     """Initialize services on startup"""
     await redis_service.initialize()
     await kafka_service.initialize()
-    logger.info("Services initialized for billing API")
+    logger.info("[BILLING] Services initialized for billing API")
 
 
 async def generate_invoice_line_items(invoice_id: int, thread_id: int, db: Session):
@@ -94,7 +94,7 @@ async def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
     # Try to get metrics from cache
     cached_metrics = await redis_service.get_user_metrics(user_id)
     if cached_metrics:
-        logger.info(f"Using cached metrics for user {user_id}")
+        logger.info(f"[BILLING] Using cached metrics for user {user_id}")
         return cached_metrics
     
     # Get all threads for this user
@@ -112,7 +112,7 @@ async def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
             .filter(UserThreadMessage.thread_id == thread_id) \
             .scalar() or 0
         
-        # Get token counts
+        # Get token counts from MessageToken table
         token_metrics = db.query(
                 MessageToken.token_type,
                 func.sum(MessageToken.token_count).label('token_count')
@@ -132,7 +132,28 @@ async def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
                 input_tokens = count
             elif token_type == "output":
                 output_tokens = count
+       # If no tokens found in MessageToken table, try getting them from UserThreadMessage table
+    if input_tokens == 0 and output_tokens == 0:
+        logger.info(f"[BILLING] No tokens found in MessageToken table, checking UserThreadMessage")
+        # Get input tokens from user messages
+        user_input_tokens = db.query(func.sum(UserThreadMessage.token_count)) \
+            .filter(UserThreadMessage.thread_id == thread_id, 
+                    UserThreadMessage.role == 'user',
+                    UserThreadMessage.token_count != None) \
+            .scalar() or 0
         
+        # Get output tokens from assistant messages
+        assistant_output_tokens = db.query(func.sum(UserThreadMessage.token_count)) \
+            .filter(UserThreadMessage.thread_id == thread_id, 
+                    UserThreadMessage.role == 'assistant',
+                    UserThreadMessage.token_count != None) \
+            .scalar() or 0
+            
+        input_tokens = user_input_tokens
+        output_tokens = assistant_output_tokens
+        logger.info(f"[BILLING] Found tokens in UserThreadMessage: input={input_tokens}, output={output_tokens}")
+
+     
         # Get the latest pricing
         pricing = db.query(DimTokenPricing) \
             .filter(DimTokenPricing.is_current == True) \
@@ -170,28 +191,43 @@ async def get_user_billing_metrics(user_id: int, db: Session = Depends(get_db)):
     
     # Cache the metrics
     if result:
+        logger.info(f"[BILLING] Caching new user metrics for user {user_id}")
         asyncio.create_task(redis_service.cache_user_metrics(user_id, result))
+        logger.info(f"[BILLING] Metrics cached: {len(result)} thread(s)")
     
     return result
 
 
 @router.get("/metrics/thread/{thread_id}", response_model=BillingMetrics)
-async def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_db)):
-
+async def get_thread_billing_metrics(
+    thread_id: int, 
+    refresh: bool = False,
+    db: Session = Depends(get_db)
+):
     """Get billing metrics for a specific thread"""
+    logger.info(f"[BILLING] Metrics requested for thread {thread_id}" + 
+                f"{' (forced refresh)' if refresh else ''}")
+    
     # Check if thread exists
     thread = db.query(UserThread).filter(UserThread.thread_id == thread_id).first()
     if not thread:
+        logger.error(f"Thread {thread_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Thread not found"
         )
     
-    # Try to get metrics from cache
-    cached_metrics = await redis_service.get_thread_metrics(thread_id)
-    if cached_metrics:
-        logger.info(f"Using cached metrics for thread {thread_id}")
-        return cached_metrics
+    # Try to get metrics from cache unless refresh is requested
+    cached_metrics = None
+    if refresh:
+        # Force clear the cache for this thread
+        logger.info(f"[BILLING] Forcing cache refresh for thread {thread_id}")
+        await redis_service.force_refresh_thread_metrics(thread_id)
+    else:
+        cached_metrics = await redis_service.get_thread_metrics(thread_id)
+        if cached_metrics:
+            logger.info(f"[BILLING] Using cached metrics for thread {thread_id}: {cached_metrics}")
+            return cached_metrics
     
     # Get message count
     message_count = db.query(func.count(UserThreadMessage.message_id)) \
@@ -234,7 +270,8 @@ async def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_d
         output_price = pricing.output_token_price
     
     # Calculate cost
-    total_cost = (input_tokens * input_price) + (output_tokens * output_price)
+    total_cost = round((input_tokens * input_price) + (output_tokens * output_price), 6)
+    logger.info(f"[BILLING] Calculated total cost for thread {thread_id}: {total_cost} (input: {input_tokens}, output: {output_tokens})")
     
     # Get last activity time
     last_activity = db.query(func.max(UserThreadMessage.created_at)) \
@@ -251,6 +288,7 @@ async def get_thread_billing_metrics(thread_id: int, db: Session = Depends(get_d
     }
     
     # Cache the metrics
+    logger.info(f"[BILLING] Caching new metrics for thread {thread_id}: {metrics}")
     asyncio.create_task(redis_service.cache_thread_metrics(thread_id, metrics))
     
     return metrics
@@ -274,7 +312,7 @@ async def generate_invoice_for_thread(thread_id: int, background_tasks: Backgrou
     
     if existing_invoice:
         # Return existing invoice
-        logger.info(f"Returning existing invoice for thread {thread_id}")
+        logger.info(f"[BILLING] Returning existing invoice for thread {thread_id}")
         return existing_invoice
     
     # Get the metrics to calculate total cost
@@ -301,7 +339,7 @@ async def generate_invoice_for_thread(thread_id: int, background_tasks: Backgrou
         db
     )
     
-    logger.info(f"Created invoice {invoice.invoice_id} for thread {thread_id}")
+    logger.info(f"[BILLING] Created invoice {invoice.invoice_id} for thread {thread_id}")
     
     return invoice
 @router.get("/invoices/user/{user_id}", response_model=List[InvoiceResponse])

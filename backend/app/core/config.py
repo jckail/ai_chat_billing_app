@@ -43,11 +43,11 @@ class Settings(BaseSettings):
     
     # Default token pricing
     DEFAULT_INPUT_TOKEN_PRICE: float = Field(
-        default=0.00000025,  # $0.25 per million tokens
+        default=0.000001,  # $1.00 per million tokens
         env="DEFAULT_INPUT_TOKEN_PRICE"
     )
     DEFAULT_OUTPUT_TOKEN_PRICE: float = Field(
-        default=0.00000075,  # $0.75 per million tokens
+        default=0.000005,  # $5.00 per million tokens
         env="DEFAULT_OUTPUT_TOKEN_PRICE"
     )
     

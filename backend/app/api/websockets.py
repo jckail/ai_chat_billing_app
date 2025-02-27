@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.transactions import UserThread, UserThreadMessage
 from app.models.dimensions import DimUser, DimModel
 from app.services.anthropic_service import anthropic_service
+from app.core.config import settings
 import traceback
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,13 @@ async def handle_chat_message(
             }
         })
         
+        # Count tokens for the user message
+        input_token_count = anthropic_service.count_tokens(message)
+        
+        # Update token count in the user message
+        user_message.token_count = input_token_count
+        db.commit()
+        
         # Get chat history to provide context
         previous_messages = db.query(UserThreadMessage).filter(
             UserThreadMessage.thread_id == thread_id
@@ -179,19 +187,29 @@ async def handle_chat_message(
                 # Add to full response
                 if "content" in chunk and chunk["content"]:
                     full_response += chunk["content"]
+                    output_token_count = chunk["token_usage"]["output_tokens"]
                     
                     # Send chunk to client
                     await manager.send_json(client_id, {
                         "type": "ASSISTANT_CHUNK",
                         "message_id": assistant_message.message_id,
                         "chunk": chunk["content"],
-                        "token_count": chunk["token_usage"]["output_tokens"]
+                        "token_count": output_token_count,
+                        "input_token_count": input_token_count
                     })
                     await asyncio.sleep(0)  # Allow cancellation points
                 
             # Update the assistant message with full content
             assistant_message.content = full_response
+            assistant_message.token_count = chunk["token_usage"]["output_tokens"]
             db.commit()
+            
+            # Calculate cost
+            input_price = settings.DEFAULT_INPUT_TOKEN_PRICE
+            output_price = settings.DEFAULT_OUTPUT_TOKEN_PRICE
+            input_cost = input_token_count * input_price
+            output_cost = chunk["token_usage"]["output_tokens"] * output_price
+            total_cost = input_cost + output_cost
             
             # Send completion notification
             await manager.send_json(client_id, {
@@ -202,7 +220,10 @@ async def handle_chat_message(
                     "content": full_response,
                     "timestamp": assistant_message.created_at.isoformat(),
                     "thread_id": thread_id,
-                    "user_id": user_id
+                    "user_id": user_id,
+                    "token_count": chunk["token_usage"]["output_tokens"],
+                    "input_tokens": input_token_count,
+                    "output_tokens": chunk["token_usage"]["output_tokens"]
                 }
             })
             

@@ -35,6 +35,7 @@ class UserThreadMessage(Base):
     role = Column(String)  # 'user' or 'assistant'
     created_at = Column(DateTime, default=func.now())
     model_id = Column(Integer, ForeignKey("dim_models.model_id"), index=True)
+    token_count = Column(Integer, nullable=True)  # Added for easier token display in UI
     
     # Relationships
     thread = relationship("UserThread", back_populates="messages")

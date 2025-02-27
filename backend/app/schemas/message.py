@@ -30,6 +30,7 @@ class MessageResponse(MessageBase):
     created_at: datetime
     model_id: int
     tokens: Optional[List[TokenCount]] = None
+    token_count: Optional[int] = None
     
     class Config:
         orm_mode = True

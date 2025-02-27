@@ -42,12 +42,10 @@ def get_redis_connection():
         st.error(f"Failed to connect to Redis: {e}")
         return None
 
-# SQLite connection
-@st.cache_resource
+# SQLite connection function - removed cache_resource to avoid threading issues
 def get_db_connection():
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         return conn
     except Exception as e:
         st.error(f"Failed to connect to database: {e}")
@@ -87,8 +85,14 @@ def get_redis_data(redis_conn, prefix, key_type, key_id=None):
 def query_db(conn, query, params=()):
     try:
         df = pd.read_sql_query(query, conn, params=params)
+        # Convert all column names to lowercase for consistency
+        df.columns = [col.lower() for col in df.columns]
         return df
     except Exception as e:
+        # Print detailed error for debugging
+        import traceback
+        error_details = traceback.format_exc()
+        st.error(f"Database error details: {error_details}")
         st.error(f"Database error: {e}")
         return pd.DataFrame()
 
@@ -263,6 +267,11 @@ st.markdown("Real-time analytics for AI thread interactions and costs")
 redis_conn = get_redis_connection()
 db_conn = get_db_connection()
 
+# Initialize empty DataFrames to prevent KeyError
+thread_metrics = pd.DataFrame()
+user_metrics = pd.DataFrame()
+pricing_df = pd.DataFrame()
+
 # Sidebar for filters and controls
 st.sidebar.header("Dashboard Controls")
 
@@ -328,12 +337,20 @@ while True:
             # Format for display
             if not recent_threads.empty:
                 for _, thread in recent_threads.iterrows():
-                    with st.expander(f"{thread['thread_title']} (ID: {thread['thread_id']})"):
-                        st.write(f"User: {thread['username']}")
-                        st.write(f"Messages: {thread['total_messages']}")
-                        st.write(f"Last Activity: {thread['last_activity']}")
-                        if 'total_cost' in thread:
-                            st.write(f"Cost: ${thread['total_cost']:.4f}")
+                    try:
+                        # Check if thread_title exists, otherwise use a default value
+                        thread_title = thread.get('thread_title', f"Thread {thread['thread_id']}")
+                        
+                        with st.expander(f"{thread_title} (ID: {thread['thread_id']})"):
+                            username = thread.get('username', 'Unknown')
+                            st.write(f"User: {username}")
+                            st.write(f"Messages: {thread['total_messages']}")
+                            st.write(f"Last Activity: {thread['last_activity']}")
+                            if 'total_cost' in thread:
+                                st.write(f"Cost: ${thread['total_cost']:.4f}")
+                    except Exception as e:
+                        st.error(f"Error displaying thread: {e}")
+                        st.write(f"Thread data: {thread.to_dict()}")
         else:
             st.info("No recent thread activity found")
     
@@ -352,11 +369,11 @@ while True:
             # Create bar chart of thread costs
             if 'total_cost' in thread_metrics:
                 fig = px.bar(
-                    thread_metrics.sort_values('total_cost', ascending=False).head(10),
-                    x='thread_title',
+                    thread_metrics.sort_values('total_cost', ascending=False).head(10).copy(),
+                    x='thread_id',
                     y='total_cost',
                     title='Top 10 Threads by Cost',
-                    labels={'thread_title': 'Thread', 'total_cost': 'Cost ($)'}
+                    labels={'thread_id': 'Thread ID', 'total_cost': 'Cost ($)'}
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -367,12 +384,12 @@ while True:
             token_data = thread_metrics.sort_values('total_input_tokens', ascending=False).head(10)
             fig = go.Figure()
             fig.add_trace(go.Bar(
-                x=token_data['thread_title'],
+                x=token_data['thread_id'],
                 y=token_data['total_input_tokens'],
                 name='Input Tokens'
             ))
             fig.add_trace(go.Bar(
-                x=token_data['thread_title'],
+                x=token_data['thread_id'],
                 y=token_data['total_output_tokens'],
                 name='Output Tokens'
             ))
@@ -386,8 +403,14 @@ while True:
             
             # Detailed thread metrics table
             st.subheader("Thread Metrics Table")
-            display_df = thread_metrics[['thread_id', 'thread_title', 'username', 'total_messages', 
-                                        'total_input_tokens', 'total_output_tokens']]
+            
+            # Check if all required columns exist, otherwise create safe version
+            required_columns = ['thread_id', 'thread_title', 'username', 'total_messages', 
+                               'total_input_tokens', 'total_output_tokens']
+            
+            # Create safe display DataFrame with only columns that exist
+            existing_columns = [col for col in required_columns if col in thread_metrics.columns]
+            display_df = thread_metrics[existing_columns]
             if 'total_cost' in thread_metrics:
                 display_df['total_cost'] = thread_metrics['total_cost'].map('${:.4f}'.format)
             

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, CssBaseline, Drawer, AppBar, Toolbar, Typography, Divider, 
          List, ListItem, ListItemButton, ListItemIcon, ListItemText, 
-         Paper, TextField, Button, CircularProgress, Tabs, Tab, IconButton } from '@mui/material';
+         Paper, TextField, Button, CircularProgress, Tabs, Tab, IconButton, Chip } from '@mui/material';
 import { Add as AddIcon, Send as SendIcon, Refresh as RefreshIcon, 
          Forum as ForumIcon, Person as PersonIcon } from '@mui/icons-material';
 import axios from 'axios';
@@ -22,6 +22,12 @@ const DEFAULT_MODEL = {
   model_name: 'claude-3-5-haiku-20241022'
 };
 
+// Token pricing constants (per token)
+const TOKEN_PRICING = {
+  INPUT_PRICE: 0.000001, // $1 per million tokens
+  OUTPUT_PRICE: 0.000005 // $5 per million tokens
+};
+
 function App() {
   // State
   const [user, setUser] = useState(null);
@@ -38,6 +44,7 @@ function App() {
   const [loadingThreads, setLoadingThreads] = useState(false);
   const [tabValue, setTabValue] = useState(0);
   const [threadMetrics, setThreadMetrics] = useState(null);
+  const [refreshingMetrics, setRefreshingMetrics] = useState(false);
   
   const drawerWidth = 280;
 
@@ -138,7 +145,14 @@ function App() {
           
           // Update metrics
           if (currentThread) {
-            fetchThreadMetrics(currentThread.thread_id);
+            // Add a small delay to ensure backend has processed token metrics
+            setTimeout(() => {
+              // Use refresh=true to force a fresh calculation
+              setRefreshingMetrics(true);
+              fetchThreadMetrics(currentThread.thread_id, true)
+                .then(() => setRefreshingMetrics(false));
+              console.log("[BILLING] Fetching updated thread metrics after message completion (with refresh)");
+            }, 3000); // 3 second delay to allow backend processing time
           }
           break;
           
@@ -269,6 +283,14 @@ function App() {
         message: messageContent,
         model_id: DEFAULT_MODEL.model_id
       }));
+      
+      // Schedule metrics update
+      setTimeout(() => {
+        console.log("[BILLING] Fetching metrics after WebSocket message send");
+        setRefreshingMetrics(true);
+        fetchThreadMetrics(currentThread.thread_id, true)
+          .then(() => setRefreshingMetrics(false));
+      }, 5000);
     }
   };
 
@@ -292,12 +314,17 @@ function App() {
   };
   
   // Fetch thread metrics
-  const fetchThreadMetrics = async (threadId) => {
+  const fetchThreadMetrics = async (threadId, refresh = false) => {
+    const url = `${API_BASE_URL}/billing/metrics/thread/${threadId}${refresh ? '?refresh=true' : ''}`;
+    console.log(`[BILLING] Fetching metrics from: ${url}`);
     try {
-      const response = await axios.get(`${API_BASE_URL}/billing/metrics/thread/${threadId}`);
+      const response = await axios.get(url);
+      console.log("[BILLING] Thread metrics received:", response.data, refresh ? "(fresh calculation)" : "(from cache)");
       setThreadMetrics(response.data);
+      return response.data;
     } catch (error) {
-      console.error('Error fetching thread metrics:', error);
+      console.error('[BILLING] Error fetching thread metrics:', error);
+      return null;
     }
   };
 
@@ -343,7 +370,14 @@ function App() {
       // Clear the input and refresh messages
       setNewMessage('');
       fetchMessages(currentThread.thread_id);
-      fetchThreadMetrics(currentThread.thread_id);
+      
+      // Schedule metrics update with a delay to allow processing
+      setTimeout(() => {
+        console.log("[BILLING] Fetching metrics after REST API message send");
+        setRefreshingMetrics(true);
+        fetchThreadMetrics(currentThread.thread_id, true)
+          .then(() => setRefreshingMetrics(false));
+      }, 5000);
     } catch (error) {
       console.error('Error sending message:', error);
     } finally {
@@ -354,6 +388,13 @@ function App() {
   // Handle tab change
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
+    // Refresh metrics when switching to the billing tab
+    if (newValue === 1 && currentThread) {
+      console.log("[BILLING] Tab changed to billing details, refreshing metrics");
+      setRefreshingMetrics(true);
+      fetchThreadMetrics(currentThread.thread_id, true)
+        .then(() => setRefreshingMetrics(false));
+    }
   };
 
   // Handle sending message with Enter key
@@ -362,6 +403,11 @@ function App() {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  // Helper to format numbers
+  const formatNumber = (num) => {
+    return num.toLocaleString();
   };
 
   // Format currency
@@ -537,9 +583,24 @@ function App() {
                               <Typography variant="caption">
                                 Role: {message.role}
                               </Typography>
-                              <Typography variant="caption" className="cost-badge">
-                                Cost: {formatCurrency(0.0001)} {/* Placeholder, real cost would come from API */}
-                              </Typography>
+                              {(message.token_count || message.input_tokens || message.output_tokens) && (
+                                <Typography variant="caption" className="cost-badge">
+                                  Cost: {formatCurrency(
+                                    message.role === 'user' 
+                                      ? ((message.token_count || message.input_tokens || 0) * TOKEN_PRICING.INPUT_PRICE) 
+                                      : ((message.token_count || message.output_tokens || 0) * TOKEN_PRICING.OUTPUT_PRICE)
+                                  )}
+                                  <Chip 
+                                    size="small" 
+                                    label={message.role === 'user' 
+                                      ? `${message.token_count || message.input_tokens || 0} input tokens` 
+                                      : `${message.token_count || message.output_tokens || 0} output tokens`
+                                    }
+                                    variant="outlined"
+                                    sx={{ ml: 1, fontSize: '0.7rem' }}
+                                  />
+                                </Typography>
+                              )}
                             </Box>
                           </Box>
                         </Box>
@@ -606,6 +667,20 @@ function App() {
                           <Typography variant="h6">{threadMetrics.total_output_tokens}</Typography>
                         </Paper>
                       </Box>
+                      <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                        <Button 
+                          onClick={() => {
+                            setRefreshingMetrics(true);
+                            fetchThreadMetrics(currentThread.thread_id, true)
+                              .then(() => setRefreshingMetrics(false));
+                          }}
+                          startIcon={refreshingMetrics ? <CircularProgress size={16} /> : <RefreshIcon />} 
+                          size="small"
+                          disabled={refreshingMetrics}
+                        >
+                          {refreshingMetrics ? 'Refreshing...' : 'Refresh Metrics'}
+                        </Button>
+                      </Box>
                     </Box>
                     
                     <Box sx={{ mt: 4 }}>
@@ -616,13 +691,13 @@ function App() {
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                           <Typography variant="body2">Input Tokens ({threadMetrics.total_input_tokens})</Typography>
                           <Typography variant="body2">
-                            {formatCurrency(threadMetrics.total_input_tokens * 0.00000025)}
+                            {formatCurrency(threadMetrics.total_input_tokens * TOKEN_PRICING.INPUT_PRICE)}
                           </Typography>
                         </Box>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                           <Typography variant="body2">Output Tokens ({threadMetrics.total_output_tokens})</Typography>
                           <Typography variant="body2">
-                            {formatCurrency(threadMetrics.total_output_tokens * 0.00000075)}
+                            {formatCurrency(threadMetrics.total_output_tokens * TOKEN_PRICING.OUTPUT_PRICE)}
                           </Typography>
                         </Box>
                         <Divider sx={{ my: 1 }} />

@@ -133,6 +133,7 @@ class RedisService:
             
             if value is None:
                 return None
+                
             
             if as_json:
                 try:
@@ -157,7 +158,9 @@ class RedisService:
         key = self._get_key(key_type, key_id)
         
         try:
+            logger.info(f"[REDIS] Deleting key: {key}")
             await self.client.delete(key)
+            logger.info(f"[REDIS] Successfully deleted key: {key}")
             return True
         except Exception as e:
             logger.error(f"Redis error deleting {key}: {str(e)}")
@@ -182,20 +185,38 @@ class RedisService:
     
     async def cache_thread_metrics(self, thread_id: int, metrics: Dict[str, Any]) -> bool:
         """Cache thread billing metrics"""
+        logger.info(f"[REDIS] Caching thread metrics for thread {thread_id}: {metrics}")
+        # Ensure metrics are properly formatted as JSON (fix any numeric types)
+        sanitized_metrics = {}
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, decimal.Decimal)):
+                sanitized_metrics[key] = float(value)
+            else:
+                sanitized_metrics[key] = value
+        
+        logger.info(f"[REDIS] Sanitized metrics for thread {thread_id}: {sanitized_metrics}")
+        
         return await self.set_value(
             key_type="thread_metrics",
             key_id=thread_id,
-            value=metrics,
+            value=sanitized_metrics,
             ttl=self.ttl_config["thread_metrics"]
         )
     
     async def get_thread_metrics(self, thread_id: int) -> Optional[Dict[str, Any]]:
-        """Get cached thread metrics"""
-        return await self.get_value(
+        """Get cached thread metrics, returns None if not found"""
+        metrics = await self.get_value(
             key_type="thread_metrics",
             key_id=thread_id,
             as_json=True
         )
+        
+        if metrics:
+            logger.info(f"[REDIS] Retrieved thread metrics for thread {thread_id}: {metrics}")
+        else:
+            logger.info(f"[REDIS] No cached metrics found for thread {thread_id}")
+            
+        return metrics
     
     async def cache_user_metrics(self, user_id: int, metrics: List[Dict[str, Any]]) -> bool:
         """Cache user billing metrics"""
@@ -222,6 +243,13 @@ class RedisService:
             value=token_data,
             ttl=self.ttl_config["token_metrics"]
         )
+
+    async def force_refresh_thread_metrics(self, thread_id: int) -> bool:
+        """Force invalidation of thread metrics cache"""
+        logger.info(f"[REDIS] Forcing refresh of thread metrics for thread {thread_id}")
+        result = await self.delete_value('thread_metrics', thread_id)
+        logger.info(f"[REDIS] Force refresh result: {result}")
+        return result
 
 # Initialize a singleton instance
 redis_service = RedisService()

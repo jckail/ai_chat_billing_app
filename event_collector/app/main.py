@@ -10,6 +10,7 @@ from datetime import datetime
 import httpx
 import uvicorn
 from aiokafka import AIOKafkaProducer
+from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(
@@ -24,11 +25,29 @@ KAFKA_INFERENCE_EVENTS_TOPIC = os.getenv("KAFKA_INFERENCE_EVENTS_TOPIC", "infere
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "10"))
 BATCH_INTERVAL_SECONDS = int(os.getenv("BATCH_INTERVAL_SECONDS", "5"))
 
+# Lifespan context manager to replace @app.on_event
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize services on startup and cleanup on shutdown"""
+    # Start batch processing task
+    task = asyncio.create_task(process_event_batches())
+    logger.info("Event batch processing started")
+    
+    yield
+    
+    # Cleanup resources on shutdown
+    global kafka_producer
+    if kafka_producer:
+        await kafka_producer.stop()
+        kafka_producer = None
+        logger.info("Kafka producer stopped")
+
 # Create FastAPI app
 app = FastAPI(
     title="Event Collector Service",
     description="Service for collecting inference API events",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
 
 # Set up CORS
@@ -50,6 +69,10 @@ class APIEvent(BaseModel):
     quantity: float
     metadata: Dict[str, Any] = Field(default_factory=dict)
     timestamp: Optional[datetime] = None
+    
+    model_config = {
+        'protected_namespaces': ()  # Disable protected namespace warning for model_id
+    }
 
 # Global state
 event_queue = []
@@ -73,22 +96,6 @@ async def get_kafka_producer():
             kafka_producer = None
     
     return kafka_producer
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize services on startup"""
-    # Start batch processing task
-    asyncio.create_task(process_event_batches())
-    logger.info("Event batch processing started")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on shutdown"""
-    global kafka_producer
-    if kafka_producer:
-        await kafka_producer.stop()
-        kafka_producer = None
-        logger.info("Kafka producer stopped")
 
 async def process_event_batches():
     """Process events in batches periodically"""
@@ -189,4 +196,4 @@ async def health_check():
     }
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8002, reload=True)
