@@ -1,4 +1,4 @@
-# 🤖 AI Thread Billing System
+# 🤖 AI Chat Billing System
 
 A proof-of-concept application for tracking and billing AI chat thread interactions with real-time cost metrics and analytics.
 
