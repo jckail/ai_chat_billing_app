@@ -1,8 +1,32 @@
-# AI Thread Billing System
+# 🤖 AI Thread Billing System
 
 A proof-of-concept application for tracking and billing AI chat thread interactions with real-time cost metrics and analytics.
 
-## Overview
+## 📸 Application Preview
+
+![Application Interface Example](design_planning/outputExample.png)
+
+## 🎯 Purpose
+
+This application is designed to solve the challenge of monitoring and billing for AI model usage in chat-based applications. As organizations increasingly deploy AI assistants, understanding the costs associated with these interactions becomes critical for business planning and cost management.
+
+**Key problems addressed:**
+- Real-time tracking of token usage and associated costs
+- Detailed breakdown of costs at the message and thread level
+- Historical analytics for budget forecasting and usage patterns
+- Near real-time metrics with minimal latency (15-second SLA)
+
+The system provides a complete billing pipeline for AI chat applications, making it suitable for both internal cost tracking and customer-facing billing scenarios.
+
+## 📊 System Design
+
+### Architecture Diagram
+[View Full System Design](https://github.com/jckail/ai_chat_billing_app/blob/main/design_planning/systemdesign.svg)
+
+### Data Model
+[View Complete Data Model](https://github.com/jckail/ai_chat_billing_app/blob/main/design_planning/datamodel.svg)
+
+## 🔍 Overview
 
 This project implements a comprehensive system to track chat interactions with AI models (primarily Anthropic's Claude), calculate real-time costs based on token usage, and provide analytics through a dedicated dashboard. The application consists of several components:
 
@@ -13,7 +37,7 @@ This project implements a comprehensive system to track chat interactions with A
 - **Message Queue**: Apache Kafka for handling high message volumes
 - **Cache**: Redis for fast access to message history and metrics
 
-## Architecture
+## 🏗️ Architecture
 
 The application follows a microservices architecture with the following components:
 
@@ -25,13 +49,13 @@ The application follows a microservices architecture with the following componen
 6. **SQLite Database**: Persists all data including user information, threads, messages, and billing
 7. **Streamlit Dashboard**: Displays real-time analytics with a 15-second refresh SLA
 
-## Prerequisites
+## 📋 Prerequisites
 
 - Docker and Docker Compose
 - Anthropic API key
 - Git
 
-## Getting Started
+## 🚀 Getting Started
 
 ### 1. Clone the Repository
 
@@ -61,7 +85,7 @@ docker-compose up
 - Dashboard: http://localhost:8501
 - Frontend (when implemented): http://localhost:3000
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 .
@@ -90,7 +114,7 @@ docker-compose up
 └── README.md               # This file
 ```
 
-## Features
+## ✨ Features
 
 - Real-time chat interface with LLM integration
 - Token usage tracking and cost calculation
@@ -101,7 +125,7 @@ docker-compose up
 - Kafka message queue for high throughput
 - Redis caching for performance optimization
 
-## API Endpoints
+## 🔌 API Endpoints
 
 ### User Management
 - `POST /api/users/` - Create a new user
@@ -124,7 +148,7 @@ docker-compose up
 - `POST /api/billing/generate-invoice/thread/{thread_id}` - Generate an invoice for a thread
 - `GET /api/billing/invoices/user/{user_id}` - Get all invoices for a user
 
-## Development
+## 💻 Development
 
 ### Adding Dependencies
 
@@ -145,6 +169,6 @@ When making changes to the database schema:
    docker-compose restart backend
    ```
 
-## License
+## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
