@@ -1,0 +1,19 @@
+---
+title: Workspace guide
+---
+
+# Workspace guide
+
+This development workspace uses a shared seeded demo account. It has no sign-in or account isolation flow. A configured, running backend is required for chat and usage data.
+
+Choose a thread from the conversation list or select **New thread**. Each thread remembers its own unsent draft while you switch conversations. The layout stacks the thread list above the workspace on small screens.
+
+Write in **Message** and use **Send** or Enter. Shift+Enter inserts a line break. The status indicates a live chat connection, an attempt to connect, or HTTP fallback. HTTP fallback can send through the API when the live socket is unavailable; it does not guarantee live streaming or automatic reconnection.
+
+If sending fails, the draft remains available. If sending succeeds but history refresh fails, the message has already been sent: reopen the thread to load history rather than resend it. Service errors appear above the workspace.
+
+Open **Billing details** to review message count, token totals and the backend’s reported cost. **Refresh metrics** requests fresh calculations; **Retry metrics** appears after failed retrieval. Usage may lag message processing. The retrieved timestamp describes when the frontend received metrics, while last activity comes from the backend. This interface does not generate invoices.
+
+These controls operate on the development backend’s data; the source-rendered Superdesign previews use synthetic data and do not send messages, access a provider or create invoices.
+
+See [README](../README.md) for local setup and [architecture](architecture.mdx) for implementation boundaries.
