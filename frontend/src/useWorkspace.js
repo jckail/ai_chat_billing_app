@@ -11,6 +11,7 @@ export default function useWorkspace() {
   const [threads, setThreads] = useState([]);
   const [currentThread, setCurrentThread] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [presentationId, setPresentationId] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [loading, setLoading] = useState(false);
   const [creatingThread, setCreatingThread] = useState(false);
@@ -29,6 +30,7 @@ export default function useWorkspace() {
   selectedIdRef.current = selectedId;
   const wsRef = useRef(null);
   const metricsRequestRef = useRef(0);
+  const historyRequestRef = useRef(0);
   const threadRequestRef = useRef(0);
   const timersRef = useRef(new Set());
   const creatingRef = useRef(false);
@@ -110,6 +112,7 @@ export default function useWorkspace() {
     let ping;
     const threadId = selectedId;
     selectionGenerationRef.current += 1;
+    setPresentationId(threadId);
     setMessages([]);
     setThreadMetrics(null);
     setMetricsError(null);
@@ -119,10 +122,11 @@ export default function useWorkspace() {
     setWsStatus('connecting');
     fetchThreadMetrics(threadId);
 
+    const historyRequest = ++historyRequestRef.current;
     axios.get(`${API_BASE_URL}/messages/${threadId}/history`).then(response => {
-      if (active && !socketHistory && !ws?.historyAdvanced) setMessages(response.data);
+      if (active && historyRequest === historyRequestRef.current && !socketHistory && !ws?.historyAdvanced) setMessages(response.data);
     }).catch(() => {
-      if (active && !socketHistory && !ws?.historyAdvanced) setError('Message history could not load. Reopen the thread to try again.');
+      if (active && historyRequest === historyRequestRef.current && !socketHistory && !ws?.historyAdvanced) setError('Message history could not load. Reopen the thread to try again.');
     });
 
     try {
@@ -147,7 +151,7 @@ export default function useWorkspace() {
         }
         switch (data.type) {
           case 'THREAD_CONNECTED':
-            if (Array.isArray(data.history)) {
+            if (Array.isArray(data.history) && !ws.httpHistoryAdvanced) {
               socketHistory = true;
               setMessages(previous => [...data.history, ...previous.filter(message => pendingMessages.includes(messageId(message)))]);
             }
@@ -194,6 +198,7 @@ export default function useWorkspace() {
       active = false;
       selectionGenerationRef.current += 1;
       metricsRequestRef.current += 1;
+      historyRequestRef.current += 1;
       clearInterval(ping);
       for (const timer of timers) clearTimeout(timer);
       timers.clear();
@@ -248,8 +253,13 @@ export default function useWorkspace() {
       sent = true;
       clearSentDraft(threadId, content);
       if (stillSelected()) {
+        const historyRequest = ++historyRequestRef.current;
         const response = await axios.get(`${API_BASE_URL}/messages/${threadId}/history`);
-        if (stillSelected()) setMessages(response.data);
+        if (stillSelected() && historyRequest === historyRequestRef.current) {
+          if (ws && wsRef.current === ws) ws.httpHistoryAdvanced = true;
+          if (ws && wsRef.current === ws) ws.historyAdvanced = true;
+          setMessages(response.data);
+        }
         scheduleMetrics(threadId, 5000);
       }
     } catch { if (stillSelected()) setError(sent ? 'Your message was sent, but history could not refresh. Reopen the thread to load it.' : 'The message could not be sent. Your draft is still available.'); }
@@ -265,8 +275,9 @@ export default function useWorkspace() {
       event.preventDefault(); sendMessage();
     }
   };
-  return { user, threads, currentThread, setCurrentThread, messages, newMessage, setNewMessage, loading,
-    creatingThread, wsStatus, typing, loadingThreads, threadsError, error, clearError: () => setError(null),
-    tabValue, threadMetrics, metricsError, metricsUpdatedAt, refreshingMetrics, fetchThreads, fetchThreadMetrics,
+  const selectionMatches = presentationId === selectedId;
+  return { user, threads, currentThread, setCurrentThread, messages: selectionMatches ? messages : [], newMessage, setNewMessage, loading,
+    creatingThread, wsStatus: selectionMatches ? wsStatus : selectedId ? 'connecting' : 'disconnected', typing: selectionMatches && typing, loadingThreads, threadsError, error: selectionMatches ? error : null, clearError: () => setError(null),
+    tabValue, threadMetrics: selectionMatches ? threadMetrics : null, metricsError: selectionMatches ? metricsError : null, metricsUpdatedAt: selectionMatches ? metricsUpdatedAt : null, refreshingMetrics: selectionMatches ? refreshingMetrics : Boolean(selectedId), fetchThreads, fetchThreadMetrics,
     createThread, sendMessage, handleTabChange, handleKeyPress };
 }

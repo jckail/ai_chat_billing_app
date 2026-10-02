@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import axios from 'axios';
 import useWorkspace from './useWorkspace';
@@ -122,4 +123,54 @@ test('initial socket history preserves a message sent while connecting history a
   expect(result.current.messages).toHaveLength(2);
   act(() => socket.emit({ type: 'MESSAGE_SENT', message: { id: 3, role: 'user', content: 'Keep optimistic message' } }));
   expect(result.current.messages[1].id).toBe(3);
+});
+
+
+test('the first committed render of a selected thread masks previous thread presentation', async () => {
+  const commits = [];
+  const { result } = renderHook(() => {
+    const state = useWorkspace();
+    useLayoutEffect(() => { commits.push({ selected: state.currentThread?.thread_id, messages: state.messages, metrics: state.threadMetrics, status: state.wsStatus, error: state.error }); });
+    return state;
+  });
+  await waitFor(() => expect(result.current.threadMetrics?.thread_id).toBe(1));
+  act(() => Socket.instances[0].emit({ type: 'THREAD_CONNECTED', history: [{ id: 1, content: 'Thread one private context' }] }));
+  act(() => result.current.setCurrentThread(threads[1]));
+  const first = commits.find(commit => commit.selected === 2);
+  expect(first.messages).toEqual([]);
+  expect(first.metrics).toBeNull();
+  expect(first.status).toBe('connecting');
+  expect(first.error).toBeNull();
+  await waitFor(() => expect(result.current.threadMetrics?.thread_id).toBe(2));
+});
+
+test('late initial socket history cannot replace a successful HTTP send refresh', async () => {
+  const { result } = await ready();
+  axios.post.mockResolvedValueOnce({ data: {} });
+  axios.get.mockResolvedValueOnce({ data: [{ message_id: 9, role: 'user', content: 'Sent through HTTP' }] });
+  act(() => result.current.setNewMessage('Sent through HTTP'));
+  await act(async () => result.current.sendMessage());
+  const socket = Socket.instances[0];
+  act(() => { socket.open(); socket.emit({ type: 'THREAD_CONNECTED', history: [] }); });
+  expect(result.current.messages).toEqual([{ message_id: 9, role: 'user', content: 'Sent through HTTP' }]);
+});
+
+
+test('initial socket and REST snapshots arriving before HTTP completion cannot erase the final refresh', async () => {
+  const initial = deferred(); const send = deferred();
+  axios.get.mockImplementation(url => {
+    if (url.includes('/threads?')) return Promise.resolve({ data: threads });
+    if (url.includes('/history')) return initial.promise;
+    return Promise.resolve({ data: metrics(1) });
+  });
+  const { result } = await ready();
+  axios.post.mockReturnValueOnce(send.promise);
+  act(() => result.current.setNewMessage('HTTP pending'));
+  let sending;
+  act(() => { sending = result.current.sendMessage(); });
+  act(() => Socket.instances[0].emit({ type: 'THREAD_CONNECTED', history: [] }));
+  axios.get.mockResolvedValueOnce({ data: [{ message_id: 18, role: 'user', content: 'HTTP pending' }] });
+  await act(async () => { send.resolve({ data: {} }); await sending; });
+  await act(async () => initial.resolve({ data: [] }));
+  expect(result.current.messages).toEqual([{ message_id: 18, role: 'user', content: 'HTTP pending' }]);
 });
