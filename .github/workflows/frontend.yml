@@ -1,0 +1,30 @@
+name: Frontend verification
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test -- --watchAll=false --maxWorkers=2
+        env:
+          CI: true
+      - run: npm run build
+        env:
+          CI: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-static-build
+          path: frontend/build
+          if-no-files-found: error
