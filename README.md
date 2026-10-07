@@ -25,7 +25,7 @@ Regression tests isolate HTTP and WebSocket transport: they do not invoke AI pro
 
 ## Local services
 
-The existing `docker-compose.yml` defines frontend `3000`, backend `8000`, dashboard `8501`, Kafka, ZooKeeper, Redis and an event collector. Running it requires Docker Compose and an `ANTHROPIC_API_KEY` supplied through the environment or a private `.env`. Sending a live chat can invoke the configured AI provider. Backend startup initializes and updates its development SQLite schema and seed data.
+The existing `docker-compose.yml` defines frontend `3000`, backend `8000`, dashboard `8501`, Kafka, ZooKeeper, Redis and an event collector. Running it requires Docker Compose and an `ANTHROPIC_API_KEY`. Copy [`.env.example`](.env.example) to a private `.env` and set that key there, or export it in the shell. `.env` stays untracked. The example lists every variable read by `backend/app/core/config.py` and named in `docker-compose.yml`, with placeholders only. Sending a live chat can invoke the configured AI provider. Backend startup initializes and updates its development SQLite schema and seed data.
 
 ```bash
 docker compose up --build
