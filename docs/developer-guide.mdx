@@ -43,4 +43,19 @@ flowchart TD
 
 Do not use the seeded user as a production identity. Before live service validation, understand that backend startup initializes development database data, chat may call Anthropic, and the existing invoice POST persists invoice records. Use isolated fixtures for regression tests. The repository contains a historical tracked `backend/venv`; the frontend workflow neither uses nor repairs it.
 
+## Unverified one-off scripts
+
+The repository root holds scripts left over from earlier debugging sessions. None is referenced by `docker-compose.yml`, the frontend package scripts or CI, and none has been verified against the current source; read a script before running it.
+
+| Script | What its source does |
+| --- | --- |
+| `fix-frontend-display.js`, `fix_syntax.js` | Node scripts that rewrite `frontend/src/App.js` in place to patch an earlier metrics display and JSX issue |
+| `fix_token_metrics.sh`, `update_token_tracking.sh` | Stop, rebuild or restart the backend container through `docker-compose` |
+| `restart_service.sh`, `restart_services.sh`, `restart_and_test.sh` | Rebuild and restart Compose services |
+| `update_and_restart.sh` | Updates the Anthropic SDK, then restarts services |
+| `test_billing_metrics.sh` | Restarts backend and frontend, flushes the whole Redis cache (`FLUSHALL`), then tails backend logs for billing messages; it runs no assertions |
+| `update_requirements.txt` | A single `anthropic` version constraint, separate from `backend/requirements.txt` |
+
+`restart_service.sh` and `update_and_restart.sh` change into a hard-coded absolute checkout path that will not exist on another machine. The shell scripts call the legacy `docker-compose` binary rather than `docker compose`.
+
 See [architecture](architecture.mdx), [workspace guide](user-guide.mdx) and [README](../README.md).
