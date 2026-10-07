@@ -17,6 +17,20 @@ REACT_APP_API_URL=https://backend.example/api npm run build
 
 The example hostname is illustrative; it is not a deployed project endpoint. Backend CORS currently allows all origins for development in `backend/app/main.py`; restrict it to the intended frontend origin before production use.
 
+Backend settings live in `backend/app/core/config.py`. Copy [`.env.example`](../.env.example) to a private `.env` at the repository root. The example contains placeholders and the development defaults; do not put a real API key in the tracked file. `Settings` reads:
+
+| Variable | Role |
+| --- | --- |
+| `DEBUG` | FastAPI debug flag. Default `false`. |
+| `DATABASE_URL` | SQLAlchemy URL. Default `sqlite:///data/billing.db`. |
+| `REDIS_URL` | Redis URL. Default `redis://redis:6379/0`. |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka broker list. Default `kafka:9092`. |
+| `ANTHROPIC_API_KEY` | Provider key. Empty by default. Compose interpolates `${ANTHROPIC_API_KEY}` into the backend service. |
+| `DEFAULT_INPUT_TOKEN_PRICE` | USD per input token. Default `0.000001`. |
+| `DEFAULT_OUTPUT_TOKEN_PRICE` | USD per output token. Default `0.000005`. |
+
+`docker-compose.yml` also names `REACT_APP_API_URL` on the frontend and the Bitnami Kafka/ZooKeeper settings `KAFKA_CFG_ZOOKEEPER_CONNECT`, `KAFKA_CFG_ADVERTISED_LISTENERS`, `ALLOW_PLAINTEXT_LISTENER`, and `ALLOW_ANONYMOUS_LOGIN`. Those values are assigned in the Compose file. A private `.env` does not override them. `DEFAULT_MODEL` is a constant in `Settings` (`claude-3-5-haiku-20241022`), not an environment variable.
+
 ## Tests and release artifact
 
 ```bash
