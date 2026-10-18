@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         env="ANTHROPIC_API_KEY"
     )
     DEFAULT_MODEL: str = "claude-3-5-haiku-20241022"
+
+    # Optional long-term chat memory (Supermemory); see app/services/memory_service.py
+    SUPERMEMORY_API_KEY: str = Field(default="", env="SUPERMEMORY_API_KEY")
+    SUPERMEMORY_ENABLED: bool = Field(default=False, env="SUPERMEMORY_ENABLED")
     
     # Default token pricing
     DEFAULT_INPUT_TOKEN_PRICE: float = Field(

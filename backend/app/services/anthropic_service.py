@@ -66,6 +66,7 @@ class AnthropicService:
         model: str = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        system: Optional[str] = None,
     ) -> Dict:
         """
         Create a chat completion with the Anthropic API
@@ -75,6 +76,7 @@ class AnthropicService:
             model: Model to use (defaults to claude-3-5-haiku)
             max_tokens: Maximum tokens in the response
             temperature: Sampling temperature
+            system: Extra system text (e.g. retrieved memory), appended to any system-role message
             
         Returns:
             Dict with response and token usage
@@ -94,6 +96,9 @@ class AnthropicService:
             else:
                 formatted_messages.append({"role": role, "content": content})
         
+        # Merge caller-supplied system text (e.g. retrieved memory) with any system-role message
+        system_message = "\n\n".join(part for part in (system_message, system) if part) or None
+
         # Count input tokens
         input_token_count = sum(self.count_tokens(msg["content"]) for msg in messages)
         
@@ -154,6 +159,7 @@ class AnthropicService:
         model: str = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        system: Optional[str] = None,
     ) -> AsyncGenerator[Dict, None]:
         """
         Stream a chat completion with the Anthropic API
@@ -163,6 +169,7 @@ class AnthropicService:
             model: Model to use (defaults to claude-3-5-haiku)
             max_tokens: Maximum tokens in the response
             temperature: Sampling temperature
+            system: Extra system text (e.g. retrieved memory), appended to any system-role message
             
         Yields:
             Dictionary with response content chunks and token counts
@@ -181,6 +188,9 @@ class AnthropicService:
                 system_message = content
             else:
                 formatted_messages.append({"role": role, "content": content})
+
+        # Merge caller-supplied system text (e.g. retrieved memory) with any system-role message
+        system_message = "\n\n".join(part for part in (system_message, system) if part) or None
 
         # Count input tokens
         input_token_count = sum(self.count_tokens(msg["content"]) for msg in messages)
