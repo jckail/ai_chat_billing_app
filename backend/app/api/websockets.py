@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.models.transactions import UserThread, UserThreadMessage
 from app.models.dimensions import DimUser, DimModel
 from app.services.anthropic_service import anthropic_service
+from app.services.memory_service import memory_service
+from app.api.messages import get_recent_messages
 from app.core.config import settings
 import traceback
 
@@ -131,17 +133,9 @@ async def handle_chat_message(
         db.commit()
         
         # Get chat history to provide context
-        previous_messages = db.query(UserThreadMessage).filter(
-            UserThreadMessage.thread_id == thread_id
-        ).order_by(UserThreadMessage.created_at).limit(10).all()
-        
-        # Format messages for Anthropic API
-        formatted_messages = []
-        for prev_msg in previous_messages:
-            formatted_messages.append({
-                "role": prev_msg.role,
-                "content": prev_msg.content
-            })
+        # (shared with the REST endpoints; the message saved above is already part of the history)
+        formatted_messages = await get_recent_messages(db, thread_id)
+        memory_context = await memory_service.recall(user_id, message)
             
         # Create a placeholder assistant message to update during streaming
         assistant_message = UserThreadMessage(
@@ -182,7 +176,8 @@ async def handle_chat_message(
             
             async for chunk in anthropic_service.stream_chat_completion(
                 messages=formatted_messages,
-                model=model_name
+                model=model_name,
+                system=memory_context
             ):
                 # Add to full response
                 if "content" in chunk and chunk["content"]:
@@ -204,6 +199,10 @@ async def handle_chat_message(
             assistant_message.token_count = chunk["token_usage"]["output_tokens"]
             db.commit()
             
+            # Remember the exchange (fail-open, off the request path)
+            if chunk.get("finish_reason") != "error":
+                memory_service.remember_in_background(user_id, thread_id, message, full_response)
+
             # Calculate cost
             input_price = settings.DEFAULT_INPUT_TOKEN_PRICE
             output_price = settings.DEFAULT_OUTPUT_TOKEN_PRICE

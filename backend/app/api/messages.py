@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 import json
 import asyncio
@@ -15,6 +15,7 @@ from app.schemas.message import MessageCreate, MessageResponse, MessageWithCost
 from app.services.anthropic_service import anthropic_service
 from app.services.redis_service import redis_service
 from app.services.kafka_service import kafka_service
+from app.services.memory_service import memory_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -73,28 +74,44 @@ async def process_message_tokens(
     })
 
 
-async def prepare_messages_for_llm(thread_id: int, new_message_content: str, db: Session):
-    """Prepare messages for the LLM API with context from thread history"""
-    # Get previous messages for context (limit to last 10 for this example)
-    previous_messages = (
-        db.query(UserThreadMessage)
-        .filter(UserThreadMessage.thread_id == thread_id)
-        .order_by(UserThreadMessage.created_at)
-        .limit(10)
+HISTORY_LIMIT = 10
+
+
+async def get_recent_messages(
+    db: Session, thread_id: int, limit: int = HISTORY_LIMIT, exclude_message_id: Optional[int] = None
+) -> List[Dict[str, str]]:
+    """Last `limit` non-empty messages of a thread in chronological order, formatted for the Anthropic API.
+
+    Shared by the REST and WebSocket paths. Takes the NEWEST messages (the old code took the oldest 10, so long
+    threads lost all recent context), and the window never starts with an assistant turn (the API requires
+    the first message to be from the user).
+    """
+    query = db.query(UserThreadMessage).filter(UserThreadMessage.thread_id == thread_id)
+    if exclude_message_id is not None:
+        query = query.filter(UserThreadMessage.message_id != exclude_message_id)
+    recent = (
+        query.order_by(UserThreadMessage.created_at.desc(), UserThreadMessage.message_id.desc())
+        .limit(limit)
         .all()
     )
-    
-    # Format messages for Anthropic API
-    formatted_messages = []
-    for prev_msg in previous_messages:
-        formatted_messages.append({
-            "role": prev_msg.role,
-            "content": prev_msg.content
-        })
-    
+    formatted = [{"role": m.role, "content": m.content} for m in reversed(recent) if m.content]
+    while formatted and formatted[0]["role"] != "user":
+        formatted.pop(0)
+    return formatted
+
+
+async def prepare_messages_for_llm(
+    thread_id: int, new_message_content: str, db: Session, exclude_message_id: Optional[int] = None
+):
+    """Prepare messages for the LLM API with context from thread history.
+
+    Pass `exclude_message_id` (the just-saved user message) so it is not sent twice.
+    """
+    formatted_messages = await get_recent_messages(db, thread_id, exclude_message_id=exclude_message_id)
+
     # Add current message
     formatted_messages.append({"role": "user", "content": new_message_content})
-    
+
     return formatted_messages
 
 
@@ -165,7 +182,10 @@ async def create_message(
     db.refresh(user_message)
     
     # Get formatted messages for LLM API
-    formatted_messages = await prepare_messages_for_llm(message.thread_id, message.content, db)
+    formatted_messages = await prepare_messages_for_llm(
+        message.thread_id, message.content, db, exclude_message_id=user_message.message_id
+    )
+    memory_context = await memory_service.recall(message.user_id, message.content)
 
     # Count tokens for user input message
     input_token_count = anthropic_service.count_tokens(message.content)
@@ -174,7 +194,8 @@ async def create_message(
         # Call Anthropic API
         llm_response = await anthropic_service.create_chat_completion(
             messages=formatted_messages,
-            model=model.model_name
+            model=model.model_name,
+            system=memory_context
         )
         
         # Create assistant message
@@ -188,6 +209,11 @@ async def create_message(
         db.add(assistant_message)
         db.commit()
         db.refresh(assistant_message)
+
+        # Remember the exchange (fail-open, off the request path)
+        background_tasks.add_task(
+            memory_service.remember, message.user_id, message.thread_id, message.content, assistant_message.content
+        )
 
         logger.info(f"[MESSAGING] Publishing LLM response {assistant_message.message_id} to Kafka")
         # Publish LLM response to Kafka
@@ -314,7 +340,10 @@ async def create_message_stream(
     db.refresh(user_message)
     
     # Get formatted messages for LLM API
-    formatted_messages = await prepare_messages_for_llm(message.thread_id, message.content, db)
+    formatted_messages = await prepare_messages_for_llm(
+        message.thread_id, message.content, db, exclude_message_id=user_message.message_id
+    )
+    memory_context = await memory_service.recall(message.user_id, message.content)
 
     # Count tokens for user input message
     input_token_count = anthropic_service.count_tokens(message.content)
@@ -347,15 +376,18 @@ async def create_message_stream(
     # Streaming response generator
     async def response_generator():
         full_content = ""
+        chunk_failed = False
         token_usage = {"input_tokens": input_token_count, "output_tokens": 0}
         
         try:
             async for chunk in anthropic_service.stream_chat_completion(
                 messages=formatted_messages,
-                model=model_name
+                model=model_name,
+                system=memory_context
             ):
                 # Update token usage
                 token_usage = chunk["token_usage"]
+                chunk_failed = chunk_failed or chunk.get("finish_reason") == "error"
                 
                 # Add to full content
                 if "content" in chunk:
@@ -370,6 +402,12 @@ async def create_message_stream(
                 assistant_message.content = full_content
                 assistant_message.token_count = token_usage["output_tokens"]
                 db.commit()
+
+                # Remember the exchange unless the stream ended in an error (fail-open, off the request path)
+                if not chunk_failed:
+                    memory_service.remember_in_background(
+                        message.user_id, message.thread_id, message.content, full_content
+                    )
 
                 logger.info(f"[MESSAGING] Publishing streamed LLM response {assistant_message.message_id} to Kafka")
                 # Publish LLM response to Kafka
