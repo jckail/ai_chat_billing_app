@@ -41,7 +41,7 @@ flowchart TD
   Artifact --> Host[Separate hosting/backend configuration]
 ```
 
-Do not use the seeded user as a production identity. Before live service validation, understand that backend startup initializes development database data, chat may call Anthropic, and the existing invoice POST persists invoice records. Use isolated fixtures for regression tests. The repository contains a historical tracked `backend/venv`; the frontend workflow neither uses nor repairs it.
+Do not use the seeded user as a production identity. Before live service validation, understand that backend startup initializes development database data, chat may call Anthropic, and the existing invoice POST persists invoice records. Use isolated fixtures for regression tests.
 
 ## Unverified one-off scripts
 

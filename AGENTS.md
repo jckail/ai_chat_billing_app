@@ -83,7 +83,7 @@ Open a PR for every change: what changed, why, how it was verified, risks, and t
 - Backend CORS allows all origins (development only; restrict before any production use). The seeded `user_id: 1` / `model_id: 1` account is a fixture, not an identity.
 - Invoice POST exists (`/api/billing/generate-invoice/thread/{id}`) and persists records, but the React UI never calls it; invoice accounting is unverified.
 - Backend startup mutates the dev SQLite schema and seed data, and a live chat can call Anthropic (costs money).
-- `backend/venv` and `__pycache__` files are historically tracked in git; do not edit them and do not treat them as source.
+- `backend/venv` and `__pycache__` files were historically tracked in git; they are now untracked and ignored (JCK-466, history keeps them). Any local copies are generated environments: do not edit them and do not treat them as source.
 
 **External systems.** Anthropic API, Kafka/ZooKeeper, Redis, SQLite. Deployment: none configured or verified.
 
