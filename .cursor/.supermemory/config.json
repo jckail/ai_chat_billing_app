@@ -1,0 +1,7 @@
+{
+  "repoContainerTag": "ai_chat_billing_app",
+  "signalExtraction": false,
+  "injectProfile": true,
+  "similarityThreshold": 0.5,
+  "maxMemories": 15
+}
