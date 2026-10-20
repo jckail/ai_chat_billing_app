@@ -5,3 +5,9 @@
 /frontend/build/
 /frontend/coverage/
 .superdesign/
+
+# Generated Python environments and bytecode (never source)
+venv/
+.venv/
+__pycache__/
+*.pyc
