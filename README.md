@@ -64,4 +64,4 @@ npm test -- --watchAll=false --maxWorkers=2
 npm run build
 ```
 
-Regression tests isolate HTTP and WebSocket transport: they do not invoke AI providers or billing endpoints. [GitHub Actions](.github/workflows/frontend.yml) runs the frontend tests and production build, then retains the static build as an artifact. These checks do not establish full backend or Compose readiness.
+Regression tests isolate HTTP and WebSocket transport: they do not invoke AI providers or billing endpoints. [Depot CI](.depot/workflows/ci.yml) runs the frontend tests and production build, then retains the static build as an artifact. These checks do not establish full backend or Compose readiness.

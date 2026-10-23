@@ -7,24 +7,41 @@ A development prototype of AI conversations with per-thread token usage and cost
 
 These apply unless this repo's own rules, below or in linked docs, say otherwise. Repo-specific rules always win. If a rule here would break a repo gate (hooks, CI, branch protection, a documented release process), follow the gate and say so in your summary.
 
-### Git hygiene
-- **Isolate work in a git worktree** when the checkout is dirty, on another branch, or shared with other agents: `git worktree add ../.worktrees/<repo>-<topic> -b <branch> origin/<default-branch>`. Never switch branches or reset a checkout holding someone else's uncommitted work. Remove the worktree when merged.
-- **One focused branch per change**, cut from a fresh `origin/<default-branch>`. Never commit directly to the default branch unless this repo explicitly says to.
-- **Commit early and often, push as you go.** Small, reviewable, self-consistent commits; push after each meaningful step so work is never only on this machine. Do not let a branch drift for days.
+### Worktrees and branches
+- **Every change gets its own worktree inside this repo, under `.worktrees/`** (gitignored, so all of a repo's worktrees sit at one level and none are committed): `git fetch --prune origin && git worktree add .worktrees/<topic> -b <branch> origin/<default-branch>`. Do not create worktrees anywhere else (no `../`, `~/projects/.worktrees`, or extra clones). Never switch branches or reset a checkout holding someone else's uncommitted work.
+- **One focused branch per change, and every pushed branch names its Linear issue.** Cut it from a fresh `origin/<default-branch>` and use the issue's `gitBranchName` (e.g. `jckail13/jck-123-short-topic`) or `jck-123-short-topic`. A branch without a `jck-<n>` key is rejected by the pre-push hook and by the `branch-name` CI job; bot branches (`dependabot/*`, `renovate/*`, `release-please--*`) are the only exception. No issue yet? Find or create one first (see Linear below). Never commit directly to the default branch unless this repo explicitly says to.
+- **Commit early and often, push as you go**, so no work exists only on this machine. Open a draft PR once there is a pushed commit. Don't let a branch drift for days: rebase or merge from `origin/<default-branch>` and rerun the gate before review.
 - **Stage precisely** (`git add <paths>`, never `git add -A` or `.` blindly). Read `git status` and `git diff --staged` before every commit. Never commit secrets, `.env*`, credentials, large binaries or generated build output.
 - **Never** force-push shared branches, rewrite published history, skip hooks (`--no-verify`) or bypass branch protection. If a hook or check fails, fix the cause or stop and report it.
-- Keep the working tree clean at the end of a task: nothing important left uncommitted, stashed or only local.
+- **Cleanup is automatic after merge.** GitHub deletes the head branch when a PR merges (`delete_branch_on_merge`). Locally, `git-prune-merged` (from agent-skills, run on a schedule and safe to run by hand) removes clean worktrees and local branches whose work is on `origin/<default-branch>`, whether by ancestry or by a merged PR with the same head. It never touches dirty, locked, unpushed or open-PR work. When you finish, leave your worktree clean and pushed so the sweep can remove it, or remove it yourself: `git worktree remove .worktrees/<topic> && git branch -d <branch>`.
 
 ### Commit messages
-Match the style already in `git log` for this repo (use conventional commits `type(scope): subject` if it does). Otherwise: imperative subject, 72 characters or fewer, no trailing period; blank line; a body explaining **why** and any trade-offs, not a restatement of the diff. Reference the Linear issue (`JCK-123`) when one exists. Add the attribution trailer your harness requires, if any.
+Every pushed commit must be understandable on its own. Match the style already in `git log` (conventional commits `type(scope): subject` if the repo uses them). Otherwise use an imperative subject of 72 characters or fewer with no trailing period, then a blank line, then a body. The body says **why** the change is needed, what it changes at a high level, trade-offs, and how it was verified. It doesn't restate the diff. Reference the Linear issue (`JCK-123`). "wip", "fix", "updates" and empty bodies are not acceptable on pushed commits; reword before pushing, never after. Add the attribution trailer your harness requires, if any.
 
 ### Pull requests and merging
-Open a PR for every change: what changed, why, how it was verified, risks, and the Linear link. Keep PRs small. Merge only with required checks green and using the merge method this repo prefers (some require linear history or forbid squash: check the repo's settings and history first). Delete the branch after merge. Do not merge a PR you could not verify.
+Open a PR for every change and fill in `.github/pull_request_template.md`:
+- **Summary**: what changed, in a few sentences.
+- **Why**: the problem or request, with the Linear link.
+- **Changes**: the notable parts, file by file only when that helps.
+- **Verification**: the exact commands run and their result, plus the Depot CI run link.
+- **Risk and rollback**: what could break and how to undo it.
+
+Keep PRs small and the title in commit-subject style with the issue key. Merge only when the required checks are green (`depot-ci / ci-result`), using the merge method this repo prefers (some require linear history or forbid squash: check the repo's settings and history first). Do not merge a PR you could not verify.
+
+### CI: Depot CI only
+- **CI runs on Depot CI**, defined in `.depot/workflows/` (GitHub Actions syntax). Do not add routine CI to `.github/workflows/`. The only exceptions are jobs Depot can't run (macOS/iOS or Windows runners, `release:`/`issues:` events, `environment:`-gated cloud deploys), each kept dispatch- or tag-only with a comment saying why.
+- **Workflow conventions:** `name: depot-ci`. Jobs run on `depot-ubuntu-24.04[-arm][-<cpus>]` (2 CPUs by default; size up only for measured wins) with `timeout-minutes`. Use `permissions: contents: read` and `persist-credentials: false`. Pin third-party actions to commit SHAs. Concurrency cancels superseded PR runs. A final `ci-result` job (`if: always()`, `needs:` every job) fails unless all succeeded; branch protection requires only `depot-ci / ci-result`.
+- **Run it before you push:** `depot ci run --workflow .depot/workflows/ci.yml` (add `--job <id>` for one job) uploads your uncommitted diff as a patch. That run is feedback, not proof for the commit; the proof is the PR run. Debug with `depot ci status`, `depot ci logs`, `depot ci diagnose --run <id>`, and `depot ci ssh` into a live job.
+- **Secrets and variables** live in Depot: `depot ci secrets add NAME --repo jckail/<repo>`, or `depot ci vars add`. Never echo them, and never put them in workflow files.
+- **Use Depot for everything it does, locally and in CI.** That means `depot build` / `depot bake` for container images (never plain `docker build`; the project id is in `depot.json`), and the Depot Registry (`f3bqc4vdfr.registry.depot.dev`, or `depot build --save`) for images that don't need a cloud registry. Use Depot Cache for compilers: `depot cargo` for Rust, `GOCACHEPROG="depot gocache"` for Go. Use `depot ci run` instead of waiting on a push.
 
 ### Linear (workspace `jckail`, issue keys `JCK-nnn`)
-- Track non-trivial work in Linear. Find the existing issue before creating one; do not duplicate.
-- Put the issue key in the branch name (`jck-123-short-topic`), PR title or description, and relevant commits.
-- Post status at start, on meaningful progress, on blockers and at handoff. If you have no Linear access this session, put the same information in the PR and say so.
+- **All dev work starts from a Linear issue**, because the branch name needs its key. Find and read the canonical issue, comments and relations before creating one, and do not duplicate. Create a narrowly scoped issue only when none fits. Preserve owner, project and status. Move the issue to In Progress when the branch is pushed, attach the PR, and leave Done for verified, merged work.
+- Split large outcomes into independently testable child issues with current source, scope, finite acceptance criteria, genuine `blockedBy` prerequisites (do not turn related context into blockers) and handback.
+- Put the issue key in the branch name (`jck-123-short-topic` or the issue's `gitBranchName`), PR title or description, and relevant commits.
+- Reconcile GitHub issues by exact `owner/repo/number`, body and comments. Link each issue to its canonical Linear outcome (plus backlink where writable); closed GitHub state alone does not prove Linear acceptance.
+- Sign every authored Linear or GitHub comment `— <harness>-<agent_session>-<device_id>` using actual runtime identity (e.g., `codex_cli-123456-jordan-ubuntu` or `antigravity-<conversationId>-<device_id>`). Never borrow another agent's identity or alter human comments.
+- Post status at start, on meaningful progress, on blockers and at handoff (avoid unchanged repeat posts within 25 minutes). If you have no Linear access this session, put the same information in the PR and say so. Quarg owns execution, leases and approvals; Linear is planning only.
 
 ### Quality bar
 - Read before you write: follow the surrounding code's conventions, naming and comment density. Prefer editing existing code and docs over adding new ones.
@@ -119,10 +136,27 @@ No existing rule conflicts with the shared standards.
 ## Git, CI and release notes for this repo
 
 - Default branch `main`. GitHub allows merge, squash and rebase. Recent PRs (#1, #2) are squash-merged with conventional-style subjects (`docs: ... (#2)`); older history has terse informal messages. No branch protection is configured (API returns 404).
-- CI: [.github/workflows/frontend.yml](.github/workflows/frontend.yml) ("Frontend verification") on push to `main` and on pull requests: Node 22, `npm ci`, tests with two workers, `npm run build`, uploads `frontend/build` as the `frontend-static-build` artifact. It does not cover the backend, collector, dashboard or Compose.
+- CI: Depot CI only; see "CI and local checks" below. A docs-only PR also runs it (no path filters), so `ci-result` is always present.
 - No hooks. No deploy: the artifact is a static release candidate only.
 - Linear is not referenced by this repo.
 - The main checkout may hold uncommitted in-progress backend work (for example Supermemory-related changes); always work in a worktree.
+
+## CI and local checks
+
+CI is Depot CI only (JCK-2026): `.depot/workflows/ci.yml`, workflow `depot-ci`, runs on pull requests, pushes to `main` and manual dispatch. Require only `depot-ci / ci-result`, which fails unless every job succeeds. Jobs (Node 22):
+
+- `branch-name`: PR branches must contain a Linear key (`jck-<n>`); bot branches are exempt.
+- `gitleaks`: pinned gitleaks binary over new commits.
+- `frontend`: in `frontend/`, `npm ci --no-audit --no-fund`, `npm test -- --watchAll=false --maxWorkers=2`, `npm run build` (with `CI=true`). Uploads `frontend/build` as the `frontend-static-build` artifact. It does not cover the backend, collector, dashboard or Compose.
+- `ci-result`: aggregate verdict.
+
+Local commands (from the repo root):
+
+```
+cd frontend && CI=true npm ci && CI=true npm test -- --watchAll=false --maxWorkers=2 && CI=true npm run build
+```
+
+Run the workflow itself before pushing: `depot ci run --workflow .depot/workflows/ci.yml [--job <id>]`. There are no GitHub Actions remnants and no CI secrets.
 
 ## Docs and systems
 

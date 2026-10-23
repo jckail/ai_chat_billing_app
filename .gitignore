@@ -5,3 +5,4 @@
 /frontend/build/
 /frontend/coverage/
 .superdesign/
+.worktrees/
