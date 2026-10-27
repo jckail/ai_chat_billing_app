@@ -120,7 +120,7 @@ docker compose up --build                            # full stack; needs ANTHROP
 ```
 
 - Backend: `uvicorn app.main:app --host 0.0.0.0 --port 8000` from `backend/` (as in its Dockerfile, Python 3.11; dependencies in `backend/requirements.txt`). Not verified here; it initializes the dev database on startup.
-- There is no backend test suite or lint config in the repo (`pytest` is listed in requirements, but no tests are committed). Full-stack startup and end-to-end provider/billing behavior are unverified.
+- Backend memory tests exist. CI runs the isolated `backend/tests/test_memory_retry.py` SDK/HTTP-transport contract using `backend/requirements-memory-test.txt`; it does not run the older full-app memory/history tests or qualify full-stack startup, authentication, providers or billing. No backend lint config is present.
 
 ## Repo-specific rules
 
@@ -143,18 +143,21 @@ No existing rule conflicts with the shared standards.
 
 ## CI and local checks
 
-CI is Depot CI only (JCK-2026): `.depot/workflows/ci.yml`, workflow `depot-ci`, runs on pull requests, pushes to `main` and manual dispatch. Require only `depot-ci / ci-result`, which fails unless every job succeeds. Jobs (Node 22):
+CI is Depot CI only (JCK-2026): `.depot/workflows/ci.yml`, workflow `depot-ci`, runs on pull requests, pushes to `main` and manual dispatch. Require only `depot-ci / ci-result`, which fails unless every job succeeds. Jobs:
 
 - `branch-name`: PR branches must contain a Linear key (`jck-<n>`); bot branches are exempt.
 - `gitleaks`: pinned gitleaks binary over new commits.
 - `frontend`: in `frontend/`, `npm ci --no-audit --no-fund`, `npm test -- --watchAll=false --maxWorkers=2`, `npm run build` (with `CI=true`). Uploads `frontend/build` as the `frontend-static-build` artifact. It does not cover the backend, collector, dashboard or Compose.
-- `ci-result`: aggregate verdict.
+- `memory-contract` (Python 3.11): install `backend/requirements-memory-test.txt`, then `python -m pytest backend/tests/test_memory_retry.py -q`. Synthetic settings and an offline HTTP transport exercise the real v5 SDK; no provider, account, database or billing calls.
+- `ci-result`: aggregate verdict, including the memory contract.
 
 Local commands (from the repo root):
 
 ```
 cd frontend && CI=true npm ci && CI=true npm test -- --watchAll=false --maxWorkers=2 && CI=true npm run build
 ```
+
+Run the isolated memory contract with `python -m pip install -r backend/requirements-memory-test.txt` and `python -m pytest backend/tests/test_memory_retry.py -q` in a dedicated environment.
 
 Run the workflow itself before pushing: `depot ci run --workflow .depot/workflows/ci.yml [--job <id>]`. There are no GitHub Actions remnants and no CI secrets.
 

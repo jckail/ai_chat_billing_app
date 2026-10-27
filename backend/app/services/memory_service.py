@@ -66,13 +66,15 @@ class MemoryService:
         return self._client
 
     def _profile_sync(self, ns: str) -> List[str]:
-        profile = self._get_client().profile(ns, filter=_source_filter(), timeout=CALL_TIMEOUT).profile
+        profile = self._get_client().with_options(max_retries=0).profile(
+            ns, filter=_source_filter(), timeout=CALL_TIMEOUT
+        ).profile
         return [f.memory for f in [*profile.static, *profile.dynamic] if f.memory]
 
     def _search_sync(self, ns: str, query: str) -> List[str]:
         # memories only (learned facts, not raw chunks); order-rerank + query rewrite because the query is a
         # free-form chat message and the result is shown to the model; threshold 0.4 trims weak matches.
-        found = self._get_client().search(
+        found = self._get_client().with_options(max_retries=0).search(
             ns,
             query=query[:MAX_TEXT_CHARS],
             search_mode="memories",
