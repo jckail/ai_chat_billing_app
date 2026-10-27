@@ -21,9 +21,13 @@ class FakeSM:
 
     def __init__(self, fail=False):
         self.fail, self.adds, self.searches, self.profile_calls = fail, [], [], []
-        self.ns_updates, self.deletes = [], []
+        self.ns_updates, self.deletes, self.options = [], [], []
         self.namespaces = NS(update=lambda ns, **kw: self.ns_updates.append((ns, kw)))
         self.documents = NS(delete=lambda ns, **kw: self.deletes.append((ns, kw)))
+
+    def with_options(self, **kwargs):
+        self.options.append(kwargs)
+        return self
 
     def profile(self, ns, **kw):
         self.profile_calls.append((ns, kw))
@@ -82,6 +86,7 @@ def test_recall_returns_system_text(svc):
     flt = {"field": "source", "operator": "eq", "value": "aichat"}
     assert kw["filter"] == flt and svc._client.profile_calls[0][1]["filter"] == flt
     assert kw["timeout"] == ms.CALL_TIMEOUT
+    assert svc._client.options == [{"max_retries": 0}, {"max_retries": 0}]
 
 
 def test_profile_cached_between_turns(svc):

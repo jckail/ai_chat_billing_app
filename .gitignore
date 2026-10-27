@@ -6,3 +6,7 @@
 /frontend/coverage/
 .superdesign/
 .worktrees/
+
+# Offline Python contract tests
+__pycache__/
+.pytest_cache/

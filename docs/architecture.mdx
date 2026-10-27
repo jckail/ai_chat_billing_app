@@ -69,3 +69,7 @@ The backend also has a POST invoice-generation route and invoice listing. The Re
 Frontend CI produces a static CRA build. Hosting that build requires a separately configured backend reachable over matching HTTP/WS or HTTPS/WSS origins and an appropriate backend CORS policy. No hosting configuration, backend release pipeline or published service URL is established here. Full Compose startup remains unverified.
 
 Source anchors: [workspace](../frontend/src/App.js), [state hook](../frontend/src/useWorkspace.js), [transport](../frontend/src/endpoints.js), [API startup](../backend/app/main.py), [chat events](../backend/app/api/websockets.py), [billing routes](../backend/app/api/billing.py), [Compose services](../docker-compose.yml).
+
+## Optional memory recall budget
+
+The disabled-by-default Supermemory adapter reads profile and learned facts concurrently under a 2.5-second recall budget. Each read has a two-second HTTP timeout and an SDK client view with retries disabled. The shared off-path write client retains its existing one-retry policy. Cancelling the async wait does not stop a synchronous HTTP request already running in a thread; disabling read retries prevents that request from starting another attempt after the budget. Offline SDK/HTTP-transport tests qualify this behavior without provider calls, tenant-auth acceptance, billing effects or deployment.

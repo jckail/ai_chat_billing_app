@@ -82,11 +82,26 @@ jobs:
           path: frontend/build
           if-no-files-found: error
 
+  memory-contract:
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements-memory-test.txt
+      - run: python -m pip install -r backend/requirements-memory-test.txt
+      - run: python -m pytest backend/tests/test_memory_retry.py -q
+
   # Required verdict. Branch protection requires only `depot-ci / ci-result`.
   ci-result:
     name: ci-result
     if: always()
-    needs: [branch-name, gitleaks, frontend]
+    needs: [branch-name, gitleaks, frontend, memory-contract]
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 2
     steps:

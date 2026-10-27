@@ -1,0 +1,5 @@
+# Offline memory-adapter contract only, not full backend/runtime qualification.
+pytest==7.4.3
+supermemory==5.0.1
+# Match the application HTTP transport version.
+httpx==0.25.1
