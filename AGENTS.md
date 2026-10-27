@@ -1,3 +1,9 @@
+<!-- BEGIN OWNER LOCAL CI OVERRIDE JCK-2596 -->
+## Local-only validation — owner decision 2026-10-26
+
+Depot is retired across these repositories (JCK-2596, incident JCK-2555). This supersedes older Depot-specific CI, merge-gate, cache, registry and pre-push guidance in this file or inherited skills. Run existing build/lint/test commands locally with bounded concurrency and process timeouts. Never invoke paid Depot compute or reconnect it. Do not automatically run a full suite per commit/push; preserve coverage and validate changes proportionately. Retain unrelated review and security requirements. Former workflow recipes in `.ci/local-reference/` are inert local setup/check references, not executable automation or proof of passing tests.
+<!-- END OWNER LOCAL CI OVERRIDE JCK-2596 -->
+
 # AI Thread Billing (ai_chat_billing_app)
 
 A development prototype of AI conversations with per-thread token usage and cost reporting, for anyone exploring how to meter and bill LLM chat usage. A React chat workspace talks to a FastAPI backend (WebSocket with HTTP fallback); Kafka, Redis and SQLite carry the event and billing pipeline, and a Streamlit dashboard reports usage and cost. It is a prototype: no authentication, a seeded demo account, no hosted deployment.
@@ -23,17 +29,18 @@ Open a PR for every change and fill in `.github/pull_request_template.md`:
 - **Summary**: what changed, in a few sentences.
 - **Why**: the problem or request, with the Linear link.
 - **Changes**: the notable parts, file by file only when that helps.
-- **Verification**: the exact commands run and their result, plus the Depot CI run link.
+- **Verification**: the exact commands run and their result, and local validation evidence.
 - **Risk and rollback**: what could break and how to undo it.
 
-Keep PRs small and the title in commit-subject style with the issue key. Merge only when the required checks are green (`depot-ci / ci-result`), using the merge method this repo prefers (some require linear history or forbid squash: check the repo's settings and history first). Do not merge a PR you could not verify.
+Keep PRs small and the title in commit-subject style with the issue key. Merge only when required local validation is documented and unrelated required checks are green, using the merge method this repo prefers (some require linear history or forbid squash: check the repo's settings and history first). Do not merge a PR you could not verify.
 
-### CI: Depot CI only
-- **CI runs on Depot CI**, defined in `.depot/workflows/` (GitHub Actions syntax). Do not add routine CI to `.github/workflows/`. The only exceptions are jobs Depot can't run (macOS/iOS or Windows runners, `release:`/`issues:` events, `environment:`-gated cloud deploys), each kept dispatch- or tag-only with a comment saying why.
-- **Workflow conventions:** `name: depot-ci`. Jobs run on `depot-ubuntu-24.04[-arm][-<cpus>]` (2 CPUs by default; size up only for measured wins) with `timeout-minutes`. Use `permissions: contents: read` and `persist-credentials: false`. Pin third-party actions to commit SHAs. Concurrency cancels superseded PR runs. A final `ci-result` job (`if: always()`, `needs:` every job) fails unless all succeeded; branch protection requires only `depot-ci / ci-result`.
-- **Run it before you push:** `depot ci run --workflow .depot/workflows/ci.yml` (add `--job <id>` for one job) uploads your uncommitted diff as a patch. That run is feedback, not proof for the commit; the proof is the PR run. Debug with `depot ci status`, `depot ci logs`, `depot ci diagnose --run <id>`, and `depot ci ssh` into a live job.
-- **Secrets and variables** live in Depot: `depot ci secrets add NAME --repo jckail/<repo>`, or `depot ci vars add`. Never echo them, and never put them in workflow files.
-- **Use Depot for everything it does, locally and in CI.** That means `depot build` / `depot bake` for container images (never plain `docker build`; the project id is in `depot.json`), and the Depot Registry (`f3bqc4vdfr.registry.depot.dev`, or `depot build --save`) for images that don't need a cloud registry. Use Depot Cache for compilers: `depot cargo` for Rust, `GOCACHEPROG="depot gocache"` for Go. Use `depot ci run` instead of waiting on a push.
+### CI: local validation only
+- **Owner decision, 2026-10-26 (JCK-2596): Depot is retired.** Do not start, dispatch, retry or rerun Depot CI, builds, sandboxes or remote compiler caches. Do not reconnect the GitHub app or raise usage caps.
+- Run the repository's existing build, lint and test commands locally, with bounded concurrency and process timeouts. Use local Docker/BuildKit and local compiler caches. Preserve coverage and secret scanning.
+- Validate affected changes locally; broaden checks when warranted. Do not automatically launch full suites on every commit or push. Record exact commands/results and resource blockers in the PR.
+- Former workflow recipes live under `.ci/local-reference/` as inert reference material. Resolve setup actions, services, matrix inputs and environment requirements locally; they are not a new workflow service or a claim of completed validation.
+- Missing Depot checks are retired integration requirements, not grounds to start paid jobs. Change only Depot-specific required checks through the issue-linked migration; preserve unrelated checks, reviews and branch protections.
+- Credentials stay in approved local secret storage; never print or commit them. Existing runtime deployments and provider billing records are outside this source removal.
 
 ### Linear (workspace `jckail`, issue keys `JCK-nnn`)
 - **All dev work starts from a Linear issue**, because the branch name needs its key. Find and read the canonical issue, comments and relations before creating one, and do not duplicate. Create a narrowly scoped issue only when none fits. Preserve owner, project and status. Move the issue to In Progress when the branch is pushed, attach the PR, and leave Done for verified, merged work.
