@@ -4,6 +4,12 @@
 Depot is retired across these repositories (JCK-2596, incident JCK-2555). This supersedes older Depot-specific CI, merge-gate, cache, registry and pre-push guidance in this file or inherited skills. Run existing build/lint/test commands locally with bounded concurrency and process timeouts. Never invoke paid Depot compute or reconnect it. Do not automatically run a full suite per commit/push; preserve coverage and validate changes proportionately. Retain unrelated review and security requirements. Former workflow recipes in `.ci/local-reference/` are inert local setup/check references, not executable automation or proof of passing tests.
 <!-- END OWNER LOCAL CI OVERRIDE JCK-2596 -->
 
+<!-- BEGIN OWNER HOST NOTE JCK-2936 -->
+## Development host — owner decision 2026-10-29
+
+The Ubuntu/WSL GamingRig workstation (`jordan-ubuntu`) is retired (JCK-2936). The Mac Studio (`Jordans-Mac-Studio.local`, macOS on Apple silicon, checkouts under `~/projects`) is the host for local validation, heavy checks and releases. This supersedes guidance in this file or inherited skills that sends work to WSL, GamingRig, `jordan-ubuntu`, `/home/jkail/...` or `/mnt/c/...`; treat those references as a record of the old rig. `agent-heavy-check` existed only on that rig and is not installed on any current host: run expensive installs, builds and broad suites on the Mac Studio one at a time in the foreground, with one verification owner, bounded workers and process timeouts. Lab data, binaries or databases that lived only on the old rig are not on the Mac Studio; report that instead of substituting other paths. Repo rules that name a specific Mac host or gate still apply.
+<!-- END OWNER HOST NOTE JCK-2936 -->
+
 # AI Thread Billing (ai_chat_billing_app)
 
 A development prototype of AI conversations with per-thread token usage and cost reporting, for anyone exploring how to meter and bill LLM chat usage. A React chat workspace talks to a FastAPI backend (WebSocket with HTTP fallback); Kafka, Redis and SQLite carry the event and billing pipeline, and a Streamlit dashboard reports usage and cost. It is a prototype: no authentication, a seeded demo account, no hosted deployment.
@@ -47,7 +53,7 @@ Keep PRs small and the title in commit-subject style with the issue key. Merge o
 - Split large outcomes into independently testable child issues with current source, scope, finite acceptance criteria, genuine `blockedBy` prerequisites (do not turn related context into blockers) and handback.
 - Put the issue key in the branch name (`jck-123-short-topic` or the issue's `gitBranchName`), PR title or description, and relevant commits.
 - Reconcile GitHub issues by exact `owner/repo/number`, body and comments. Link each issue to its canonical Linear outcome (plus backlink where writable); closed GitHub state alone does not prove Linear acceptance.
-- Sign every authored Linear or GitHub comment `— <harness>-<agent_session>-<device_id>` using actual runtime identity (e.g., `codex_cli-123456-jordan-ubuntu` or `antigravity-<conversationId>-<device_id>`). Never borrow another agent's identity or alter human comments.
+- Sign every authored Linear or GitHub comment `— <harness>-<agent_session>-<device_id>` using actual runtime identity (e.g., `codex_cli-123456-jordans-mac-studio` or `antigravity-<conversationId>-<device_id>`). Never borrow another agent's identity or alter human comments.
 - Post status at start, on meaningful progress, on blockers and at handoff (avoid unchanged repeat posts within 25 minutes). If you have no Linear access this session, put the same information in the PR and say so. Quarg owns execution, leases and approvals; Linear is planning only.
 
 ### Quality bar
